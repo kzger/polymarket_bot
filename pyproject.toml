@@ -1,0 +1,24 @@
+[project]
+name = "polymarket-rbi-bot"
+version = "0.1.0"
+description = "Polymarket-native market making research and legacy RBI bot reference code."
+requires-python = ">=3.12"
+dependencies = [
+  "ccxt>=4.3.0",
+  "numpy>=1.26.0",
+  "pandas>=2.2.0",
+  "py-clob-client>=0.18.0",
+  "pydantic>=2.6.0",
+  "pydantic-settings>=2.2.0",
+  "python-dotenv>=1.0.0",
+  "ta>=0.11.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

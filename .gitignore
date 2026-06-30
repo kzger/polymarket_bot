@@ -19,10 +19,12 @@ env/
 
 # Data
 data/candles/
+logs/
 
 # Local tooling state
 .codegraph/
 .serena/
+agent_workspace/
 
 # Crash dumps
 *.stackdump

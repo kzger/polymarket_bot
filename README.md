@@ -1,133 +1,135 @@
-# Polymarket RBI Trading Bot
+# Polymarket RBI Bot
 
-A Python algorithmic trading bot for Polymarket's prediction market CLOB. Uses three technical strategies (MACD, RSI+VWAP, CVD) with a polling-based execution loop, full backtesting support, and a risk-controlled order layer. All orders are **limit orders only** via `py-clob-client`.
+This repository now has two parts:
 
----
+- `mm_v2/` is the planned clean rewrite: a Polymarket-native, passive market-making system driven by Polymarket market/user data.
+- `strategies/`, `bot/`, `backtesting/`, and `deploy/` are retired legacy reference code for the original ETH-signal RBI bot.
 
-## Project Structure
+`mm_v2/PLAN.md` is the authoritative specification. Read it before implementing new system code.
 
-```
-polymarket-rbi-bot/
-├── config/
-│   ├── settings.py          # All parameters (Pydantic, loaded from .env)
-│   └── accounts.py          # Polymarket account setup
-├── data/
-│   ├── downloader.py        # Binance OHLCV via ccxt
-│   ├── polymarket_client.py # Polymarket CLOB API wrapper
-│   └── storage.py           # CSV / SQLite persistence
-├── strategies/
-│   ├── base_strategy.py     # BaseStrategy ABC + Signal / MarketData types
-│   ├── macd_strategy.py     # MACD Histogram (3/15/3)
-│   ├── rsi_mean_reversion.py# RSI(14) Mean Reversion + VWAP filter
-│   └── cvd_strategy.py      # Cumulative Volume Delta divergence
-├── backtesting/
-│   ├── engine.py            # Tick-by-tick backtest engine
-│   ├── metrics.py           # Win rate, profit factor, Sharpe, drawdown
-│   └── runner.py            # Parallel parameter sweep
-├── bot/
-│   ├── trader.py            # 5-minute polling loop + strategy registry
-│   ├── risk_manager.py      # Position cap, open orders, daily loss, min size
-│   ├── order_manager.py     # Limit order lifecycle + deduplication
-│   └── position_tracker.py  # Position and P&L per market
-├── incubation/
-│   ├── monitor.py           # Live P&L dashboard
-│   ├── scaler.py            # Gradual position size ramp
-│   └── logger.py            # JSON-lines trade event logger
-├── deploy/
-│   ├── run_bot.py           # Launch live bot
-│   ├── run_backtest.py      # Launch backtest + print metrics
-│   └── run_monitor.py       # Launch incubation monitor
-└── tests/
-    ├── test_strategies.py
-    ├── test_backtesting.py
-    └── test_risk_manager.py
+## Development Environment
+
+- OS: Windows
+- Python: 3.12+
+- Python environment and command runner: `uv`
+- Live Polymarket work: gated behind explicit credentials and M0 conformance in `mm_v2/PLAN.md`
+
+Use `uv` for all Python work:
+
+```powershell
+uv venv
+uv sync
+uv run pytest
+uv run python deploy/run_backtest.py
 ```
 
----
+Do not use bare `python`, `pip`, or `pytest` for repository commands.
 
-## Quick Start
+## Repository Layout
 
-### 1. Install dependencies
+| Path | Status | Purpose |
+|---|---|---|
+| `mm_v2/PLAN.md` | Authoritative spec | Current plan for the Polymarket-native market maker. |
+| `mm_v2/` | New work area | New implementation should be built here according to `PLAN.md`. |
+| `strategies/` | Retired reference | Legacy MACD/RSI/CVD strategies. Do not extend for `mm_v2`. |
+| `bot/` | Retired reference | Legacy order, position, risk, and trader loop code. |
+| `backtesting/` | Retired reference | Legacy candle-based backtesting. |
+| `data/` | Retired/reference utilities | Legacy Binance/Polymarket data helpers. |
+| `tests/` | Legacy tests | Tests for retired legacy modules. |
+| `suggestion*.md` | Design history | Review rounds that led to `mm_v2/PLAN.md`. |
 
-```bash
-pip install -r requirements.txt
+## Current Direction
+
+The old bot mixed Binance ETH/USDT technical signals with arbitrary Polymarket token execution. That signal/target mismatch is retired.
+
+The new system is a clean `mm_v2/` implementation with these constraints:
+
+- Binary Polymarket markets only for v1.
+- YES/NO books are modeled together by `condition_id`.
+- Inventory is fill-ledger derived, not mutable notional totals.
+- Complete-set split/merge/redeem is core inventory functionality.
+- Quotes are passive post-only orders.
+- Risk uses directional unmatched limits plus paired inventory and pending-operation caps.
+- Recorder, live handling, replay, ledger, and order state machine share event semantics.
+- Frozen contracts in `mm_v2/PLAN.md` §10 must not be changed silently.
+
+## Implementation Order
+
+Workstreams that do not need credentials can start first:
+
+1. WS-A: `feeds/` recorder, typed event decoder, book builder, public market/user read path.
+2. WS-B: `domain/` pure inventory, order, market spec, routing, and risk model.
+3. WS-C: `accounting/` markout and shadow replay inputs.
+
+Credentialed work is gated:
+
+4. WS-D: `execution/` adapters and `app/conformance_main.py` after explicit M0 authorization and credentials.
+
+Before parallel work, follow the frozen contracts in `mm_v2/PLAN.md` §10:
+
+- Contract #1: recorded event envelope
+- Contract #1b: parsed event union and decode boundary
+- Contract #2: `ExchangePort` / `CtfPort`
+- Contract #3: inventory balance basis
+- Contract #4: settlement identity
+
+## Commands
+
+Create and sync the environment:
+
+```powershell
+uv venv
+uv sync
 ```
 
-### 2. Configure environment
+Run tests:
 
-```bash
-cp .env.example .env
-# Edit .env with your Polymarket private key and API credentials
+```powershell
+uv run pytest
 ```
 
-### 3. Run a backtest
+Run legacy backtest tooling when needed for reference only:
 
-```bash
-python deploy/run_backtest.py
+```powershell
+uv run python deploy/run_backtest.py
 ```
 
-### 4. Run the live bot (dry-run: set MAX_POSITION_USDC=0 in .env)
+## Configuration
 
-```bash
-python deploy/run_bot.py
+Use `.env.example` as a template. Do not commit real credentials.
+
+Live `mm_v2` work requires explicit user authorization and the M0 credential set described in `mm_v2/PLAN.md` §12. Type-3 deposit-wallet order placement remains an SDK/protocol-stack gate in M0; do not assume any client path works until conformance proves it.
+
+## New Session Prompt
+
+Use this prompt to start an implementation session:
+
+```text
+You are implementing the Polymarket-native mm_v2 system in this repo.
+
+First read AGENTS.md, CLAUDE.md, README.md, and mm_v2/PLAN.md fully. Treat mm_v2/PLAN.md as the single source of truth. Do not redesign the strategy direction and do not modify legacy directories unless explicitly asked.
+
+Important constraints:
+- Use uv for all Python environment creation and execution: uv venv, uv sync, uv run pytest, uv run python ...
+- The legacy strategies/, bot/, backtesting/, deploy/ code is retired reference only.
+- Frozen contracts in mm_v2/PLAN.md §10 must be implemented exactly: Contract #1 RecordedEvent, #1b ParsedRecordedEvent/decode_recorded_event, #2 ExchangePort/CtfPort, #3 inventory balance basis, #4 settlement identity.
+- If any external fact conflicts with PLAN.md, add a proposal to §11 Open decisions instead of silently diverging in code.
+- No live trading or credential use unless the task explicitly enters M0 or M2.5 and credentials are provided.
+
+Start with no-credential work:
+1. Build mm_v2 package skeleton for WS-A/WS-B/WS-C.
+2. Implement typed contract models and pure domain types first.
+3. Add focused tests for inventory math, reachable risk interval, parsed market/user events, WS-vs-REST trade identity, and post-only request invariants.
+4. Run uv run pytest and report exact results.
+
+Keep changes scoped and report modified files plus verification output.
 ```
 
-### 5. Launch the monitor in a separate terminal
+## Reference Files
 
-```bash
-python deploy/run_monitor.py
-```
-
----
-
-## Strategies
-
-| Strategy | Signal Logic | Data Source |
-|----------|-------------|-------------|
-| **MACD** | Histogram zero-cross (fast=3, slow=15, signal=3) | Binance OHLCV |
-| **RSI Mean Reversion** | RSI(14) < 30 / > 70 with VWAP filter | Binance OHLCV |
-| **CVD** | Bid/ask size delta divergence from price | Polymarket order book |
-
-Signals are combined via majority vote, with price averaged by confidence weight.
-
----
-
-## Risk Controls
-
-- **Max position per market**: configurable USDC cap (default $500)
-- **Max open orders**: cap on resting limit orders (default 10)
-- **Max daily loss**: halt trading at threshold (default $100)
-- **Min order size**: reject signals below Polymarket minimum (default $1)
-
----
-
-## Backtesting
-
-The `BacktestEngine` reuses the same `BaseStrategy` objects as the live bot — no adapter layer.
-Limit orders are simulated: BUY fills when the next candle's low touches the limit price; SELL fills when the high touches it. Unfilled orders expire after 3 candles.
-
-Run a parallel parameter sweep:
-
-```bash
-python deploy/run_backtest.py
-```
-
----
-
-## Environment Variables
-
-See `.env.example` for the full list. Key variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `POLY_PRIVATE_KEY` | — | Polymarket wallet private key |
-| `POLY_HOST` | `https://clob.polymarket.com` | CLOB API endpoint |
-| `BINANCE_SYMBOL` | `ETH/USDT` | ccxt symbol for OHLCV data |
-| `MAX_POSITION_USDC` | `500` | Max exposure per market |
-| `MAX_DAILY_LOSS_USDC` | `100` | Daily loss halt threshold |
-| `POLL_INTERVAL_SECONDS` | `300` | Bot loop interval (5 min) |
-
----
+- `mm_v2/PLAN.md`: authoritative implementation plan.
+- `suggestion.md`, `suggestion2.md`, `suggestion3.md`: design discussion history.
+- `polymarket_requirement.md`: original requirements notes.
 
 ## License
 
