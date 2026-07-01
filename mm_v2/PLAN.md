@@ -368,6 +368,7 @@ Suggested ownership: one agent per workstream. WS-A/B/C can all start now. WS-D 
 
 - **Edge positioning:** UNDECIDED until M2.5. Default stance = defensive reward-aware; classify per market. Do not pre-commit.
 - **Protocol stack freeze (OPEN — must resolve before M0; supersedes the old "start on `py-clob-client`" note).** CLOB V2 is live and **v1 is unsupported** (§8), so v1 is off the table. Decide before M0: (a) **client** — `py-sdk` (beta) / `py-clob-client-v2` / `ts-sdk` / `rs-clob-client-v2` / direct REST; **none is a known-good type-3 path** (§8 — #70 affects Python, TS *and* Rust), so each must pass the M0 `create/derive key → sign → postOrder → cancel → user WS` probe before selection; (b) **wallet/signing** — type-3 deposit-wallet (no working SDK today) vs falling back to an existing **type-1/2 proxy/Safe** account for the canary (the only confirmed-working paths); (c) **CTF execution** — direct on-chain vs relayer (gasless). All three sit behind `ExchangePort`/`CtfPort` (Contract #2) so the choice doesn't leak into domain/strategy. The M0 conformance harness exists precisely to make this decision empirically.
+- **REST-trade `source_kind` interpretation (recorded, not a contract change).** Contract #1's `source_kind` enum stays frozen at `market_ws | user_ws | rest_snapshot | synthetic_marker`. The REST trades endpoint (`RestTradeEvent`, Contract #1b/#4) is recorded as `source_kind=rest_snapshot` + `event_type='trade'`; `decode_recorded_event` distinguishes it from a WS trade by `(source_kind, event_type)`. If a dedicated `rest_trades` source_kind is later wanted, that is a Contract #1 change (bump `schema_version`) — flagging here first per process.
 - (Add proposals here rather than diverging in code.)
 
 **Applied in review #1 (2026-06-30), verified vs official CLOB V2 docs — now frozen, not open:**
@@ -417,7 +418,3 @@ RELAYER_HOST=https://relayer-v2.polymarket.com
 ```
 
 ---
-
-## References
-- Round-by-round design dialogue: `../suggestion.md`, `../suggestion2.md`, `../suggestion3.md` (root).
-- Legacy system (reference only): `../strategies/`, `../bot/`, `../backtesting/`.
