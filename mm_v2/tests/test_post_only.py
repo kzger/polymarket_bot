@@ -42,6 +42,8 @@ def make_request(**overrides) -> PassivePostOnlyOrderRequest:
         size=Decimal("100"),
         order_type=OrderType.GTC,
         tick_size=Decimal("0.01"),
+        signed_payload_hash="0xhash",
+        signed_payload="0xsignedbytes",
     )
     base.update(overrides)
     return PassivePostOnlyOrderRequest(**base)
@@ -98,6 +100,19 @@ def test_price_not_tick_aligned_is_violation() -> None:
 def test_non_positive_size_is_violation() -> None:
     req = make_request(size=Decimal("0"))
     assert any("size" in v.lower() for v in post_only_request_violations(req))
+
+
+def test_missing_signed_payload_hash_is_violation() -> None:
+    # The signed payload hash is the idempotency anchor (no native
+    # client_order_id); an unsigned request cannot be reconciled on UNKNOWN.
+    violations = post_only_request_violations(make_request(signed_payload_hash=None))
+    assert any("signed_payload_hash" in v for v in violations)
+
+
+def test_missing_signed_payload_bytes_is_violation() -> None:
+    # The exact signed bytes are resent verbatim on retry (§4.4).
+    violations = post_only_request_violations(make_request(signed_payload=None))
+    assert any("signed_payload" in v and "hash" not in v for v in violations)
 
 
 # --- result conformance (the protocol breaker) ------------------------------

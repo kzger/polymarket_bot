@@ -17,7 +17,7 @@ All quantities are on the Contract #3 ``shadow_owned_total`` basis (via
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from mm_v2.domain.inventory import InventoryState
@@ -113,12 +113,21 @@ def assess_new_order(
     candidate_size: Decimal,
     *,
     d0: Decimal | None = None,
+    candidate_collateral_reservation: Decimal = _ZERO,
 ) -> RiskAssessment:
     """Assess whether placing ``candidate_size`` of ``candidate_route`` keeps the
     reachable directional interval within the limit AND respects the caps.
 
     ``d0`` defaults to the inventory's current directional inventory; it is a
     parameter so callers can probe hypothetical states.
+
+    ``candidate_collateral_reservation`` is the collateral this order would newly
+    reserve on placement (``size * price`` for a bid; ``0`` for an ask — the
+    caller knows the price, this layer works in directional/share space). It is
+    projected into ``collateral_reserved_for_bids`` so the ``collateral_reserved``
+    cap is checked against the *post-order* state, not just current inventory
+    (§6). Ask-side token reservations move ``*_reserved_for_asks`` but do not
+    change ``shadow_owned`` or hit any v1 cap, so they need no projection.
     """
     if d0 is None:
         d0 = inventory.directional_inventory
@@ -129,12 +138,22 @@ def assess_new_order(
     lo, hi = reachable_directional_interval(d0, projected)
     d_limit = limits.directional_unmatched_limit
 
+    projected_inventory = inventory
+    if candidate_collateral_reservation:
+        projected_inventory = replace(
+            inventory,
+            collateral_reserved_for_bids=(
+                inventory.collateral_reserved_for_bids
+                + candidate_collateral_reservation
+            ),
+        )
+
     violations: list[str] = []
     if not (lo >= -d_limit and hi <= d_limit):
         violations.append(
             f"directional reachable interval [{lo}, {hi}] breaches ±{d_limit}"
         )
-    violations.extend(caps_violations(inventory, limits))
+    violations.extend(caps_violations(projected_inventory, limits))
 
     return RiskAssessment(
         approved=not violations,

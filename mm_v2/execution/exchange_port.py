@@ -256,7 +256,14 @@ def price_is_tick_aligned(price: Decimal, tick_size: Decimal) -> bool:
 
 def post_only_request_violations(req: PassivePostOnlyOrderRequest) -> list[str]:
     """Return a list of invariant violations (empty list ⇒ the request is a
-    well-formed passive post-only order that cannot become a taker)."""
+    submit-ready passive post-only order that cannot become a taker).
+
+    A request may be built unsigned at INTENT and signed later, but a request
+    handed to :meth:`ExchangePort.submit_order` MUST carry its signed payload:
+    there is no native ``client_order_id``, so ``signed_payload`` (resent
+    verbatim on retry) and ``signed_payload_hash`` ARE the idempotency anchor for
+    UNKNOWN/lost-response reconciliation (PLAN §4.4, Contract #2). This gate is
+    therefore run on the submit path, after signing."""
     issues: list[str] = []
     if req.order_type not in POST_ONLY_ORDER_TYPES:
         issues.append(
@@ -274,6 +281,10 @@ def post_only_request_violations(req: PassivePostOnlyOrderRequest) -> list[str]:
         issues.append("GTD order requires an expiration")
     if req.order_type is OrderType.GTC and req.expiration is not None:
         issues.append("GTC order must not carry an expiration")
+    if not req.signed_payload_hash:
+        issues.append("signed_payload_hash is required (idempotency anchor; §4.4)")
+    if not req.signed_payload:
+        issues.append("signed_payload is required (resent verbatim on retry; §4.4)")
     return issues
 
 

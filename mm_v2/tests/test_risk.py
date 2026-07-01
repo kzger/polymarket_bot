@@ -116,3 +116,59 @@ def test_caps_violations_empty_when_within_limits() -> None:
         unconfirmed_fill_cap=Decimal("100"),
     )
     assert caps_violations(InventoryState(), limits) == []
+
+
+def test_assess_new_order_rejects_candidate_reservation_over_collateral_cap() -> None:
+    # Pre-order reservation is UNDER the cap, but THIS bid's own collateral
+    # reservation pushes it over. It must be rejected even though the directional
+    # tail is fine — the candidate must be projected into collateral_reserved_cap
+    # (§6), not just the directional interval.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        collateral_reserved_cap=Decimal("50"),
+    )
+    inv = InventoryState(collateral_reserved_for_bids=Decimal("40"))  # under 50
+    decision = assess_new_order(
+        inv,
+        limits,
+        {},
+        ExposureRoute.BUY_YES,
+        Decimal("20"),
+        d0=Decimal("0"),
+        candidate_collateral_reservation=Decimal("15"),  # 40 + 15 = 55 > 50
+    )
+    assert decision.approved is False
+    assert any("collateral" in v.lower() for v in decision.violations)
+
+
+def test_assess_new_order_approves_when_candidate_reservation_within_cap() -> None:
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        collateral_reserved_cap=Decimal("50"),
+    )
+    inv = InventoryState(collateral_reserved_for_bids=Decimal("40"))
+    decision = assess_new_order(
+        inv,
+        limits,
+        {},
+        ExposureRoute.BUY_YES,
+        Decimal("5"),
+        d0=Decimal("0"),
+        candidate_collateral_reservation=Decimal("5"),  # 40 + 5 = 45 <= 50
+    )
+    assert decision.approved is True
+    assert decision.violations == ()
+
+
+def test_assess_new_order_reservation_defaults_to_zero_backward_compatible() -> None:
+    # Without a supplied reservation the caps are checked on current inventory,
+    # so an existing over-cap reservation is flagged but a new order adds nothing.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        collateral_reserved_cap=Decimal("50"),
+    )
+    inv = InventoryState(collateral_reserved_for_bids=Decimal("30"))
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.BUY_YES, Decimal("5"), d0=Decimal("0")
+    )
+    assert decision.approved is True
