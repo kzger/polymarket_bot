@@ -1,6 +1,6 @@
 # Polymarket RBI Bot
 
-`mm_v2/` is the system: a Polymarket-native, passive market-making implementation driven by Polymarket market/user data. The original ETH-signal RBI bot (`strategies/`, `bot/`, `backtesting/`, `deploy/`, `data/`, `config/`, `incubation/`, `tests/`) has been removed;
+`mm_v2/` is the system: a Polymarket-native, passive market-making implementation driven by Polymarket market/user data. The original ETH-signal RBI bot (`strategies/`, `bot/`, `backtesting/`, `deploy/`, `data/`, `config/`, `incubation/`, `tests/`) has been removed.
 
 `mm_v2/PLAN.md` is the authoritative specification. Read it before implementing new system code.
 
