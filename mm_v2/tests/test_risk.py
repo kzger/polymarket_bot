@@ -172,3 +172,47 @@ def test_assess_new_order_reservation_defaults_to_zero_backward_compatible() -> 
         inv, limits, {}, ExposureRoute.BUY_YES, Decimal("5"), d0=Decimal("0")
     )
     assert decision.approved is True
+
+
+def test_assess_new_order_rejects_candidate_buy_that_would_breach_paired_cap() -> None:
+    # Holding 10 NO; a BUY_YES of 6 would create P = min(6, 10) = 6 on fill, over
+    # the paired cap of 5 — must be rejected even though the directional tail is
+    # fine. The candidate's fill-side token delta must be projected into the
+    # paired_inventory_cap check, not just the pre-order tokens (§6).
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        paired_inventory_cap=Decimal("5"),
+    )
+    inv = InventoryState(no_free=Decimal("10"))
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.BUY_YES, Decimal("6"), d0=Decimal("-10")
+    )
+    assert decision.approved is False
+    assert any("paired" in v.lower() for v in decision.violations)
+
+
+def test_assess_new_order_approves_buy_within_paired_cap() -> None:
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        paired_inventory_cap=Decimal("5"),
+    )
+    inv = InventoryState(no_free=Decimal("10"))
+    # P = min(4, 10) = 4 <= 5
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.BUY_YES, Decimal("4"), d0=Decimal("-10")
+    )
+    assert decision.approved is True
+
+
+def test_assess_new_order_sell_is_not_projected_as_paired_increase() -> None:
+    # A SELL can only reduce paired on fill, so the worst case for the paired cap
+    # is the sell NOT filling; it must not be projected as a paired increase.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        paired_inventory_cap=Decimal("5"),
+    )
+    inv = InventoryState(yes_free=Decimal("4"), no_free=Decimal("4"))  # P = 4 <= 5
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.SELL_YES, Decimal("6"), d0=Decimal("0")
+    )
+    assert decision.approved is True

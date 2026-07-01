@@ -10,6 +10,8 @@ Field sets are verified against the Market / User WS docs (PLAN §10):
 * ``MarketPriceChange`` has **no** top-level ``asset_id``; one message may carry
   BOTH YES and NO changes; ``size == 0`` means the level was removed; each
   change carries its own ``asset_id`` + ``hash`` that verifies THAT asset's book.
+  The delta array arrives under ``price_changes`` on the live wire (``changes``
+  kept as a fallback).
 * User-channel WS frames carry **no** bucket/transaction metadata. Settlement
   buckets (``bucket_index`` / ``transaction_hash``) arrive only on the REST
   trades endpoint (``RestTradeEvent``) — the decoder must not fabricate them.
@@ -370,7 +372,9 @@ def _decode_market(event: RecordedEvent) -> ParsedRecordedEvent:
                 best_bid=opt_decimal(c.get("best_bid")),
                 best_ask=opt_decimal(c.get("best_ask")),
             )
-            for c in p.get("changes", [])
+            # Live market WS carries the array under `price_changes`; keep
+            # `changes` as a fallback (exact field is M0-verifiable — PLAN §11).
+            for c in p.get("price_changes", p.get("changes", []))
         )
         return MarketPriceChange(
             market=str(p.get("market", event.condition_id)),

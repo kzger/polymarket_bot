@@ -134,6 +134,40 @@ def test_decode_price_change_carries_both_yes_and_no_with_removal_flag() -> None
     assert no_change.best_ask == Decimal("0.51")
 
 
+def test_decode_price_change_reads_price_changes_wire_field() -> None:
+    # Live market WS price_change frames carry the array under `price_changes`;
+    # the decoder must read that (not silently drop deltas), keeping `changes` as
+    # a fallback. Dropping these would run replay/markout on stale post-snapshot
+    # books.
+    rec = make_event(
+        SourceKind.MARKET_WS,
+        "price_change",
+        {
+            "market": CONDITION,
+            "price_changes": [
+                {
+                    "asset_id": YES_TOK,
+                    "side": "SELL",
+                    "price": "0.53",
+                    "size": "120",
+                    "hash": "h-yes",
+                    "best_bid": "0.48",
+                    "best_ask": "0.53",
+                },
+            ],
+            "timestamp": "1700000000010",
+        },
+    )
+
+    parsed = decode_recorded_event(rec)
+
+    assert isinstance(parsed, MarketPriceChange)
+    assert len(parsed.changes) == 1
+    assert parsed.changes[0].asset_id == YES_TOK
+    assert parsed.changes[0].price == Decimal("0.53")
+    assert parsed.changes[0].size == Decimal("120")
+
+
 def test_decode_last_trade() -> None:
     rec = make_event(
         SourceKind.MARKET_WS,

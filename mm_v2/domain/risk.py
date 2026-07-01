@@ -25,6 +25,16 @@ from mm_v2.domain.routing import ROUTE_DIRECTIONAL_SIGN, ExposureRoute
 
 _ZERO = Decimal("0")
 
+# A candidate BUY acquires tokens on its outcome side when it fills, which can
+# raise paired inventory P = min(Y, N). Project that fill into shadow_owned via
+# the matched-unconfirmed component (a just-filled, unsettled position). Only
+# BUYs appear here: a SELL reduces its side on fill, so the worst case for the
+# paired cap is the sell NOT filling — never projected as an increase.
+_BUY_FILL_FIELD: dict[ExposureRoute, str] = {
+    ExposureRoute.BUY_YES: "matched_unconfirmed_yes",
+    ExposureRoute.BUY_NO: "matched_unconfirmed_no",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RiskLimits:
@@ -128,6 +138,14 @@ def assess_new_order(
     cap is checked against the *post-order* state, not just current inventory
     (§6). Ask-side token reservations move ``*_reserved_for_asks`` but do not
     change ``shadow_owned`` or hit any v1 cap, so they need no projection.
+
+    A candidate **BUY** is also projected as filling (``candidate_size`` tokens on
+    its outcome side, as matched-unconfirmed) so ``paired_inventory_cap`` and
+    ``unconfirmed_fill_cap`` are checked against the post-fill state — a buy that
+    fills against existing opposite-side inventory can raise ``P = min(Y, N)`` at
+    once. A SELL is not projected as a fill (it only reduces paired; worst case is
+    it not filling). The reservation and fill deltas touch independent cap fields,
+    so each cap still sees its own worst case.
     """
     if d0 is None:
         d0 = inventory.directional_inventory
@@ -138,15 +156,15 @@ def assess_new_order(
     lo, hi = reachable_directional_interval(d0, projected)
     d_limit = limits.directional_unmatched_limit
 
-    projected_inventory = inventory
+    proj_kwargs: dict[str, Decimal] = {}
     if candidate_collateral_reservation:
-        projected_inventory = replace(
-            inventory,
-            collateral_reserved_for_bids=(
-                inventory.collateral_reserved_for_bids
-                + candidate_collateral_reservation
-            ),
+        proj_kwargs["collateral_reserved_for_bids"] = (
+            inventory.collateral_reserved_for_bids + candidate_collateral_reservation
         )
+    fill_field = _BUY_FILL_FIELD.get(candidate_route)
+    if fill_field is not None:
+        proj_kwargs[fill_field] = getattr(inventory, fill_field) + candidate_size
+    projected_inventory = replace(inventory, **proj_kwargs) if proj_kwargs else inventory
 
     violations: list[str] = []
     if not (lo >= -d_limit and hi <= d_limit):
