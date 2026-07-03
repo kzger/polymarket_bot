@@ -358,3 +358,18 @@ def test_gross_unconfirmed_includes_fill_when_a_bucket_still_open() -> None:
 
 def test_gross_unconfirmed_empty_is_zero() -> None:
     assert gross_unconfirmed_fill_quantity([], []) == Decimal("0")
+
+
+def test_gross_unconfirmed_ws_only_fill_stays_unconfirmed_if_ws_confirmed() -> None:
+    # A User WS update may report CONFIRMED before the REST poll produces bucket
+    # rows. Without bucket proof the fill stays unconfirmed (Contract #1b/#4:
+    # WS-only fills stay unconfirmed until REST buckets prove all buckets).
+    fills = [_fill("mk-buy", Decimal("10"), status=SettlementStatus.CONFIRMED)]
+    assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("10")
+
+
+def test_gross_unconfirmed_ws_only_fill_stays_unconfirmed_if_ws_failed() -> None:
+    # Likewise a WS-reported FAILED is not proven terminal without REST buckets;
+    # holding it unconfirmed is the conservative, contract-aligned direction.
+    fills = [_fill("mk-buy", Decimal("10"), status=SettlementStatus.FAILED)]
+    assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("10")

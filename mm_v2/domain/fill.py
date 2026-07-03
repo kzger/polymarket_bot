@@ -221,9 +221,12 @@ def gross_unconfirmed_fill_quantity(
     A fill's terminality is its LOGICAL-TRADE status, aggregated across ALL its
     trade's settlement buckets via :func:`aggregate_logical_status` (§3.2 — a
     single ``CONFIRMED`` bucket alongside an open bucket is NOT terminal). A fill
-    whose trade has no buckets falls back to its own (WS ``LOGICAL_TRADE``)
-    status. Fills are deduped by :func:`logical_fill_key`, keeping ``max(|size|)``
-    per key to guard partial-fill growth.
+    whose trade has **no** settlement buckets yet stays unconfirmed regardless of
+    any WS-reported status: WS frames carry no bucket/tx metadata, so WS-only
+    terminality is unproven and the fill is held unconfirmed until REST buckets
+    prove all buckets terminal (Contract #1b/#4). Fills are deduped by
+    :func:`logical_fill_key`, keeping ``max(|size|)`` per key to guard partial-fill
+    growth.
 
     ``buckets`` MUST be the current authoritative set for the trades in ``fills``
     (all known buckets from ledger state), and the result recomputed on each
@@ -243,11 +246,12 @@ def gross_unconfirmed_fill_quantity(
     total = Decimal("0")
     for f in best_by_key.values():
         trade_buckets = statuses_by_trade.get(f.trade_id)
-        status = (
-            aggregate_logical_status(trade_buckets)
-            if trade_buckets is not None
-            else f.status
-        )
-        if status.is_unconfirmed_exposure:
+        if trade_buckets is None:
+            # WS-only fill: settlement terminality is unproven without REST
+            # buckets, so it stays unconfirmed (Contract #1b/#4, §3.2) even if the
+            # WS status reads CONFIRMED/FAILED.
+            total += abs(f.size)
+            continue
+        if aggregate_logical_status(trade_buckets).is_unconfirmed_exposure:
             total += abs(f.size)
     return total
