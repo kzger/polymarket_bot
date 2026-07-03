@@ -231,6 +231,10 @@ class RestTradeEvent:
     transaction_hash: str | None
     match_time: str
     timestamp: int | None
+    # the user's ROLE in the trade ("MAKER"/"TAKER"), distinct from `side`
+    # (BUY/SELL). Discriminates a top-level taker fill when `maker_orders` is empty
+    # (Contract #4 top-level-fill capture). Absent on some rows → None.
+    trader_side: str | None = None
 
 
 # --- Recorder-internal ------------------------------------------------------
@@ -477,6 +481,7 @@ def _decode_rest_trade(event: RecordedEvent) -> RestTradeEvent:
         bucket_index=to_int(p["bucket_index"]),
         transaction_hash=(str(p["transaction_hash"]) if p.get("transaction_hash") else None),
         match_time=str(p["match_time"]),
+        trader_side=(str(p["trader_side"]).strip().upper() if p.get("trader_side") else None),
         timestamp=opt_int(p.get("timestamp")),
     )
 

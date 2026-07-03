@@ -20,7 +20,8 @@ from typing import Any
 # Bump on any envelope field change (Contract #1).
 SCHEMA_VERSION = 1
 # Bump whenever decode_recorded_event's parsing changes (Contract #1 / #1b).
-PARSER_VERSION = 1
+# v2: RestTradeEvent gained `trader_side` (top-level taker-fill capture).
+PARSER_VERSION = 2
 
 
 class SourceKind(Enum):

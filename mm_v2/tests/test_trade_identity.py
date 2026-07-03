@@ -18,7 +18,10 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from mm_v2.accounting.inventory_ledger import (
+    UnattributableRestFillError,
     derive_logical_fills,
     derive_settlement_buckets,
 )
@@ -373,3 +376,60 @@ def test_gross_unconfirmed_ws_only_fill_stays_unconfirmed_if_ws_failed() -> None
     # holding it unconfirmed is the conservative, contract-aligned direction.
     fills = [_fill("mk-buy", Decimal("10"), status=SettlementStatus.FAILED)]
     assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("10")
+
+
+# --- REST top-level taker-fill capture (empty maker_orders) -----------------
+def _rest_row(
+    *, trader_side: str | None, maker_orders: list[dict[str, Any]] | None = None
+) -> RestTradeEvent:
+    payload: dict[str, Any] = {
+        "trade_id": TRADE_ID,
+        "taker_order_id": TAKER,
+        "asset_id": YES_TOK,
+        "market": COND,
+        "side": "BUY",
+        "outcome": "YES",
+        "price": "0.52",
+        "size": "100",
+        "status": "CONFIRMED",
+        "bucket_index": "0",
+        "transaction_hash": "0xabc",
+        "match_time": MATCH_TIME,
+        "maker_orders": maker_orders if maker_orders is not None else [],
+    }
+    if trader_side is not None:
+        payload["trader_side"] = trader_side
+    parsed = decode_recorded_event(_rec(SourceKind.REST_SNAPSHOT, payload))
+    assert isinstance(parsed, RestTradeEvent)
+    return parsed
+
+
+def test_rest_taker_fill_synthesized_when_maker_orders_empty() -> None:
+    fills = derive_logical_fills(_rest_row(trader_side="TAKER"))
+    assert len(fills) == 1
+    f = fills[0]
+    assert f.maker_order_id == TAKER  # keyed by the user's taker order id
+    assert f.side is Side.BUY
+    assert f.size == Decimal("100")
+    assert f.outcome is Outcome.YES
+    assert f.status_scope is StatusScope.BUCKET
+
+
+def test_rest_empty_maker_non_taker_raises_loud() -> None:
+    with pytest.raises(UnattributableRestFillError):
+        derive_logical_fills(_rest_row(trader_side="MAKER"))
+
+
+def test_rest_empty_maker_missing_trader_side_raises_loud() -> None:
+    with pytest.raises(UnattributableRestFillError):
+        derive_logical_fills(_rest_row(trader_side=None))
+
+
+def test_rest_populated_maker_orders_never_also_synthesizes_taker_fill() -> None:
+    # A trade with maker fills yields ONLY per-maker fills (user is maker here),
+    # never also a taker-keyed synthesized fill — the maker XOR taker invariant,
+    # so no double count.
+    fills = derive_logical_fills(_rest_trade())  # has MAKER_A + MAKER_B
+    keys = {f.maker_order_id for f in fills}
+    assert keys == {MAKER_A, MAKER_B}
+    assert TAKER not in keys
