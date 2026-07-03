@@ -25,16 +25,6 @@ from mm_v2.domain.routing import ROUTE_DIRECTIONAL_SIGN, ExposureRoute
 
 _ZERO = Decimal("0")
 
-# A candidate BUY acquires tokens on its outcome side when it fills, which can
-# raise paired inventory P = min(Y, N). Project that fill into shadow_owned via
-# the matched-unconfirmed component (a just-filled, unsettled position). Only
-# BUYs appear here: a SELL reduces its side on fill, so the worst case for the
-# paired cap is the sell NOT filling — never projected as an increase.
-_BUY_FILL_FIELD: dict[ExposureRoute, str] = {
-    ExposureRoute.BUY_YES: "matched_unconfirmed_yes",
-    ExposureRoute.BUY_NO: "matched_unconfirmed_no",
-}
-
 
 @dataclass(frozen=True, slots=True)
 class RiskLimits:
@@ -129,23 +119,22 @@ def assess_new_order(
     ``d0`` defaults to the inventory's current directional inventory; it is a
     parameter so callers can probe hypothetical states.
 
-    ``candidate_collateral_reservation`` is the collateral this order would newly
-    reserve on placement (``size * price`` for a bid; ``0`` for an ask — the
-    caller knows the price, this layer works in directional/share space). It is
-    projected into ``collateral_reserved_for_bids`` so the ``collateral_reserved``
-    cap is checked against the *post-order* state, not just current inventory
-    (§6). Ask-side token reservations move ``*_reserved_for_asks`` but do not
-    change ``shadow_owned`` or hit any v1 cap, so they need no projection.
+    Fill-based caps are checked on the **reachable** set — the resting orders in
+    ``pending_by_route`` plus this candidate — because gross and paired inventory
+    accrue at FILL, not placement (§6, the same basis as the directional interval):
 
-    Every candidate fill — BUY **or** SELL — is projected as outstanding unsettled
-    exposure into ``matched_unconfirmed_fill_gross`` so ``unconfirmed_fill_cap``
-    (a GROSS basis) is checked against the post-fill state. Additionally a **BUY**
-    projects ``candidate_size`` tokens on its outcome side (as matched-unconfirmed)
-    so ``paired_inventory_cap`` sees the post-fill ``P = min(Y, N)`` — a buy
-    filling against existing opposite-side inventory can raise it at once. A SELL
-    is NOT projected into paired (it only reduces paired; worst case is it not
-    filling). Each projection touches an independent cap field, so every cap still
-    sees its own worst case.
+    * ``unconfirmed_fill_cap`` (GROSS, never nets): projected as
+      ``matched_unconfirmed_fill_gross + Σ reachable fills`` over **all** routes —
+      any fill (BUY or SELL) is outstanding unsettled exposure.
+    * ``paired_inventory_cap`` (``P = min(Y, N)``): reachable **BUY** fills acquire
+      tokens on their outcome side; SELLs only reduce paired, so are not projected
+      (worst case is they do not fill).
+
+    ``collateral_reserved_cap`` is the exception: collateral is reserved at
+    PLACEMENT, so resting bids already sit in ``collateral_reserved_for_bids`` and
+    only this order's marginal ``candidate_collateral_reservation`` (``size*price``
+    for a bid, ``0`` for an ask) is added. Each projection touches an independent
+    cap field, so every cap sees its own worst case.
     """
     if d0 is None:
         d0 = inventory.directional_inventory
@@ -156,19 +145,31 @@ def assess_new_order(
     lo, hi = reachable_directional_interval(d0, projected)
     d_limit = limits.directional_unmatched_limit
 
+    # gross never nets: every reachable fill (all routes) is unsettled exposure.
     proj_kwargs: dict[str, Decimal] = {
-        # any candidate fill (BUY or SELL) is outstanding unsettled exposure.
         "matched_unconfirmed_fill_gross": (
-            inventory.matched_unconfirmed_fill_gross + candidate_size
+            inventory.matched_unconfirmed_fill_gross + sum(projected.values(), _ZERO)
         ),
     }
     if candidate_collateral_reservation:
         proj_kwargs["collateral_reserved_for_bids"] = (
             inventory.collateral_reserved_for_bids + candidate_collateral_reservation
         )
-    fill_field = _BUY_FILL_FIELD.get(candidate_route)
-    if fill_field is not None:
-        proj_kwargs[fill_field] = getattr(inventory, fill_field) + candidate_size
+    # paired P = min(Y, N): reachable BUY fills acquire tokens on their side.
+    reachable_buy_yes = sum(
+        (q for r, q in projected.items() if r is ExposureRoute.BUY_YES), _ZERO
+    )
+    reachable_buy_no = sum(
+        (q for r, q in projected.items() if r is ExposureRoute.BUY_NO), _ZERO
+    )
+    if reachable_buy_yes:
+        proj_kwargs["matched_unconfirmed_yes"] = (
+            inventory.matched_unconfirmed_yes + reachable_buy_yes
+        )
+    if reachable_buy_no:
+        proj_kwargs["matched_unconfirmed_no"] = (
+            inventory.matched_unconfirmed_no + reachable_buy_no
+        )
     projected_inventory = replace(inventory, **proj_kwargs)
 
     violations: list[str] = []

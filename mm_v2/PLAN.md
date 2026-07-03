@@ -173,6 +173,8 @@ unconfirmed_fill_cap
 ```
 `unconfirmed_fill_cap` is measured on **gross** outstanding unsettled-fill quantity (never the net of offsetting fills — a still-unsettled BUY_YES + SELL_YES do not cancel). `InventoryState.matched_unconfirmed_fill_gross` carries it, populated by the ledger fold via `domain.fill.gross_unconfirmed_fill_quantity` (deduped by logical-fill key; terminality aggregated across **all** of a trade's buckets per §3.2). It is a **cap-only** basis, deliberately outside the frozen `shadow_owned_*` / `available_*` accessors (Contract #3).
 
+The **fill-based** caps (`unconfirmed_fill_cap` gross, and `paired_inventory_cap`) are projected on the **reachable** set in `assess_new_order` — the resting orders in `pending_by_route` plus the candidate — because they accrue at fill (same basis as the directional interval): gross sums all reachable-route fills; paired adds reachable BUY fills per outcome side. `collateral_reserved_cap` is the exception — collateral is reserved at *placement*, so resting bids are already counted and only the candidate's marginal reservation is projected.
+
 **Worst case = a *subset* of orders filling, not all.** With current `D₀`:
 ```
 U₊ = Q(BUY_YES) + Q(SELL_NO)

@@ -263,3 +263,76 @@ def test_assess_new_order_rejects_sell_that_pushes_gross_over_unconfirmed_cap() 
     )  # gross 4 + 3 = 7 > 5
     assert decision.approved is False
     assert any("unconfirmed" in v.lower() for v in decision.violations)
+
+
+# --- reachable-fill projection (resting orders + candidate) ------------------
+_WIDE = dict(
+    directional_unmatched_limit=Decimal("1000"),
+    paired_inventory_cap=Decimal("1000"),
+)
+
+
+def test_gross_cap_includes_reachable_resting_orders() -> None:
+    # unconfirmed_fill_cap=10; a resting 9-share order + a new 9-share candidate
+    # can both match before settlement → 18 gross → rejected (was approved when
+    # only the candidate was projected).
+    limits = RiskLimits(unconfirmed_fill_cap=Decimal("10"), **_WIDE)
+    pending = {ExposureRoute.BUY_YES: Decimal("9")}
+    decision = assess_new_order(
+        InventoryState(), limits, pending, ExposureRoute.BUY_YES, Decimal("9"),
+        d0=Decimal("0"),
+    )  # projected gross = 9 + 9 = 18 > 10
+    assert decision.approved is False
+    assert any("unconfirmed" in v.lower() for v in decision.violations)
+
+
+def test_gross_cap_approves_when_reachable_within_cap() -> None:
+    limits = RiskLimits(unconfirmed_fill_cap=Decimal("10"), **_WIDE)
+    pending = {ExposureRoute.BUY_YES: Decimal("3")}
+    decision = assess_new_order(
+        InventoryState(), limits, pending, ExposureRoute.BUY_YES, Decimal("3"),
+        d0=Decimal("0"),
+    )  # gross 3 + 3 = 6 <= 10
+    assert decision.approved is True
+
+
+def test_gross_cap_never_nets_across_offsetting_routes() -> None:
+    # A resting BUY_YES 6 and a candidate SELL_YES 6 net to zero directionally,
+    # but gross settlement exposure does not net → projected 12 > 10 → rejected.
+    limits = RiskLimits(unconfirmed_fill_cap=Decimal("10"), **_WIDE)
+    pending = {ExposureRoute.BUY_YES: Decimal("6")}
+    inv = InventoryState(yes_free=Decimal("6"))  # tokens to sell
+    decision = assess_new_order(
+        inv, limits, pending, ExposureRoute.SELL_YES, Decimal("6"), d0=Decimal("0")
+    )  # gross = 6 (resting buy) + 6 (candidate sell) = 12 > 10
+    assert decision.approved is False
+    assert any("unconfirmed" in v.lower() for v in decision.violations)
+
+
+def test_gross_cap_trips_when_pending_alone_near_cap() -> None:
+    # Existing reachable pending is already at the cap; a small candidate on a
+    # different route pushes it over.
+    limits = RiskLimits(unconfirmed_fill_cap=Decimal("10"), **_WIDE)
+    pending = {ExposureRoute.BUY_YES: Decimal("10")}
+    decision = assess_new_order(
+        InventoryState(), limits, pending, ExposureRoute.BUY_NO, Decimal("1"),
+        d0=Decimal("0"),
+    )  # gross = 10 + 1 = 11 > 10
+    assert decision.approved is False
+
+
+def test_paired_cap_includes_reachable_resting_buys() -> None:
+    # 10 NO, cap 5; a resting BUY_YES 4 + a new BUY_YES 2 can both fill → P =
+    # min(6, 10) = 6 > 5 → rejected, though a candidate-only projection (2) would
+    # approve.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("1000"),
+        paired_inventory_cap=Decimal("5"),
+    )
+    inv = InventoryState(no_free=Decimal("10"))
+    pending = {ExposureRoute.BUY_YES: Decimal("4")}
+    decision = assess_new_order(
+        inv, limits, pending, ExposureRoute.BUY_YES, Decimal("2"), d0=Decimal("-10")
+    )
+    assert decision.approved is False
+    assert any("paired" in v.lower() for v in decision.violations)
