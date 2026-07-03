@@ -34,7 +34,14 @@ class InventoryState:
     * terminal confirmed balances, split into free vs reserved-for-resting-orders
     * MATCHED-but-unconfirmed fill deltas (signed: tokens gained are positive,
       collateral spent is negative)
+    * gross outstanding unsettled-fill quantity (``matched_unconfirmed_fill_gross``,
+      unsigned) — the ``unconfirmed_fill_cap`` basis only; NOT a balance basis
     * non-terminal CTF pending (excluded from ``shadow_owned_total``)
+
+    The signed ``matched_unconfirmed_*`` fields are the NET basis for
+    ``shadow_owned``/``directional``; ``matched_unconfirmed_fill_gross`` is the
+    GROSS basis for the settlement-risk cap (offsetting unsettled fills must not
+    net to zero). The two frozen Contract #3 accessors below are unchanged.
     """
 
     # terminal confirmed (free vs committed to resting orders)
@@ -48,6 +55,11 @@ class InventoryState:
     matched_unconfirmed_collateral: Decimal = _ZERO
     matched_unconfirmed_yes: Decimal = _ZERO
     matched_unconfirmed_no: Decimal = _ZERO
+    # GROSS outstanding unsettled-fill quantity (sum of |size| over non-terminal
+    # fills; never nets). Basis for unconfirmed_fill_cap ONLY — deliberately NOT
+    # part of shadow_owned_* / available_* (Contract #3). Populated by the ledger
+    # fold via domain.fill.gross_unconfirmed_fill_quantity; defaults to 0.
+    matched_unconfirmed_fill_gross: Decimal = _ZERO
     # non-terminal CTF pending (EXCLUDED from shadow_owned_total — Contract #3)
     pending_splits: Decimal = _ZERO  # complete-set qty: collateral → YES + NO
     pending_merges: Decimal = _ZERO  # complete-set qty: YES + NO → collateral

@@ -104,9 +104,7 @@ def caps_violations(inventory: InventoryState, limits: RiskLimits) -> list[str]:
             f"pending_ctf_operation_cap: {pending_ctf} > {limits.pending_ctf_operation_cap}"
         )
 
-    unconfirmed = abs(inventory.matched_unconfirmed_yes) + abs(
-        inventory.matched_unconfirmed_no
-    )
+    unconfirmed = inventory.matched_unconfirmed_fill_gross
     if unconfirmed > limits.unconfirmed_fill_cap:
         issues.append(
             f"unconfirmed_fill_cap: {unconfirmed} > {limits.unconfirmed_fill_cap}"
@@ -139,13 +137,15 @@ def assess_new_order(
     (§6). Ask-side token reservations move ``*_reserved_for_asks`` but do not
     change ``shadow_owned`` or hit any v1 cap, so they need no projection.
 
-    A candidate **BUY** is also projected as filling (``candidate_size`` tokens on
-    its outcome side, as matched-unconfirmed) so ``paired_inventory_cap`` and
-    ``unconfirmed_fill_cap`` are checked against the post-fill state — a buy that
-    fills against existing opposite-side inventory can raise ``P = min(Y, N)`` at
-    once. A SELL is not projected as a fill (it only reduces paired; worst case is
-    it not filling). The reservation and fill deltas touch independent cap fields,
-    so each cap still sees its own worst case.
+    Every candidate fill — BUY **or** SELL — is projected as outstanding unsettled
+    exposure into ``matched_unconfirmed_fill_gross`` so ``unconfirmed_fill_cap``
+    (a GROSS basis) is checked against the post-fill state. Additionally a **BUY**
+    projects ``candidate_size`` tokens on its outcome side (as matched-unconfirmed)
+    so ``paired_inventory_cap`` sees the post-fill ``P = min(Y, N)`` — a buy
+    filling against existing opposite-side inventory can raise it at once. A SELL
+    is NOT projected into paired (it only reduces paired; worst case is it not
+    filling). Each projection touches an independent cap field, so every cap still
+    sees its own worst case.
     """
     if d0 is None:
         d0 = inventory.directional_inventory
@@ -156,7 +156,12 @@ def assess_new_order(
     lo, hi = reachable_directional_interval(d0, projected)
     d_limit = limits.directional_unmatched_limit
 
-    proj_kwargs: dict[str, Decimal] = {}
+    proj_kwargs: dict[str, Decimal] = {
+        # any candidate fill (BUY or SELL) is outstanding unsettled exposure.
+        "matched_unconfirmed_fill_gross": (
+            inventory.matched_unconfirmed_fill_gross + candidate_size
+        ),
+    }
     if candidate_collateral_reservation:
         proj_kwargs["collateral_reserved_for_bids"] = (
             inventory.collateral_reserved_for_bids + candidate_collateral_reservation
@@ -164,7 +169,7 @@ def assess_new_order(
     fill_field = _BUY_FILL_FIELD.get(candidate_route)
     if fill_field is not None:
         proj_kwargs[fill_field] = getattr(inventory, fill_field) + candidate_size
-    projected_inventory = replace(inventory, **proj_kwargs) if proj_kwargs else inventory
+    projected_inventory = replace(inventory, **proj_kwargs)
 
     violations: list[str] = []
     if not (lo >= -d_limit and hi <= d_limit):

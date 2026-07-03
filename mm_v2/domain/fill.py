@@ -205,3 +205,49 @@ def logical_status_from_buckets(
 ) -> SettlementStatus:
     """Logical-trade status derived across a trade's settlement buckets (§3.2)."""
     return aggregate_logical_status(b.status for b in buckets)
+
+
+def gross_unconfirmed_fill_quantity(
+    fills: Iterable[LogicalFill],
+    buckets: Iterable[SettlementBucket],
+) -> Decimal:
+    """Gross ``|size|`` of logical fills still in unconfirmed settlement exposure.
+
+    The GROSS basis for ``unconfirmed_fill_cap`` (it never nets): two offsetting
+    still-unsettled fills — BUY_YES 10 + SELL_YES 10 — count as 20, not 0. This
+    is the sanctioned derivation the ledger fold calls to populate
+    :attr:`InventoryState.matched_unconfirmed_fill_gross`.
+
+    A fill's terminality is its LOGICAL-TRADE status, aggregated across ALL its
+    trade's settlement buckets via :func:`aggregate_logical_status` (§3.2 — a
+    single ``CONFIRMED`` bucket alongside an open bucket is NOT terminal). A fill
+    whose trade has no buckets falls back to its own (WS ``LOGICAL_TRADE``)
+    status. Fills are deduped by :func:`logical_fill_key`, keeping ``max(|size|)``
+    per key to guard partial-fill growth.
+
+    ``buckets`` MUST be the current authoritative set for the trades in ``fills``
+    (all known buckets from ledger state), and the result recomputed on each
+    update — passing only a newly-arrived bucket could transiently drop a fill
+    whose other bucket is still open.
+    """
+    statuses_by_trade: dict[str, list[SettlementStatus]] = {}
+    for b in buckets:
+        statuses_by_trade.setdefault(b.trade_id, []).append(b.status)
+
+    best_by_key: dict[LogicalFillKey, LogicalFill] = {}
+    for f in fills:
+        current = best_by_key.get(f.key)
+        if current is None or abs(f.size) > abs(current.size):
+            best_by_key[f.key] = f
+
+    total = Decimal("0")
+    for f in best_by_key.values():
+        trade_buckets = statuses_by_trade.get(f.trade_id)
+        status = (
+            aggregate_logical_status(trade_buckets)
+            if trade_buckets is not None
+            else f.status
+        )
+        if status.is_unconfirmed_exposure:
+            total += abs(f.size)
+    return total

@@ -23,10 +23,13 @@ from mm_v2.accounting.inventory_ledger import (
     derive_settlement_buckets,
 )
 from mm_v2.domain.fill import (
+    LogicalFill,
+    SettlementBucket,
     SettlementStatus,
     StatusScope,
     aggregate_logical_status,
     fill_dedup_key,
+    gross_unconfirmed_fill_quantity,
     logical_fill_key,
     logical_status_from_buckets,
     settlement_bucket_key,
@@ -268,3 +271,90 @@ def test_fill_dedup_key_is_stable_per_trade_maker_and_cumulative_size() -> None:
     fill = derive_logical_fills(_ws_trade())[0]
     key = fill_dedup_key(fill.trade_id, fill.maker_order_id, fill.size)
     assert key == (TRADE_ID, MAKER_A, Decimal("60"))
+
+
+# --- gross unconfirmed fill quantity (unconfirmed_fill_cap basis) -----------
+def _fill(
+    maker_id: str,
+    size: Decimal,
+    *,
+    side: Side = Side.BUY,
+    status: SettlementStatus = SettlementStatus.MATCHED,
+    trade_id: str = TRADE_ID,
+) -> LogicalFill:
+    return LogicalFill(
+        trade_id=trade_id,
+        maker_order_id=maker_id,
+        taker_order_id=TAKER,
+        asset_id=YES_TOK,
+        outcome=Outcome.YES,
+        side=side,
+        price=Decimal("0.5"),
+        size=size,
+        match_time=MATCH_TIME,
+        status=status,
+    )
+
+
+def _bucket(
+    bucket_index: int, status: SettlementStatus, *, trade_id: str = TRADE_ID
+) -> SettlementBucket:
+    return SettlementBucket(
+        trade_id=trade_id,
+        bucket_index=bucket_index,
+        match_time=MATCH_TIME,
+        transaction_hash="0xabc",
+        status=status,
+        status_scope=StatusScope.BUCKET,
+    )
+
+
+def test_gross_unconfirmed_sums_distinct_offsetting_fills() -> None:
+    # BUY_YES 10 and SELL_YES 10 (distinct maker orders), both still unsettled WS
+    # fills with no buckets → gross = 20; they must NOT net to zero.
+    fills = [
+        _fill("mk-buy", Decimal("10"), side=Side.BUY),
+        _fill("mk-sell", Decimal("10"), side=Side.SELL),
+    ]
+    assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("20")
+
+
+def test_gross_unconfirmed_dedups_same_logical_fill_key() -> None:
+    # The same (trade_id, maker_order_id) seen twice (e.g. WS + a re-report) is
+    # one logical fill → counted once (max size guards partial-fill growth).
+    fills = [_fill("mk-buy", Decimal("6")), _fill("mk-buy", Decimal("10"))]
+    assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("10")
+
+
+def test_gross_unconfirmed_excludes_fully_confirmed_trade() -> None:
+    fills = [_fill("mk-buy", Decimal("10"))]
+    buckets = [
+        _bucket(0, SettlementStatus.CONFIRMED),
+        _bucket(1, SettlementStatus.CONFIRMED),
+    ]
+    assert gross_unconfirmed_fill_quantity(fills, buckets) == Decimal("0")
+
+
+def test_gross_unconfirmed_excludes_failed_trade() -> None:
+    fills = [_fill("mk-buy", Decimal("10"))]
+    buckets = [
+        _bucket(0, SettlementStatus.CONFIRMED),
+        _bucket(1, SettlementStatus.FAILED),
+    ]
+    # all buckets terminal, one FAILED → logical FAILED (terminal) → not outstanding
+    assert gross_unconfirmed_fill_quantity(fills, buckets) == Decimal("0")
+
+
+def test_gross_unconfirmed_includes_fill_when_a_bucket_still_open() -> None:
+    # §3.2: one CONFIRMED bucket alongside a RETRYING bucket ⇒ logical trade NOT
+    # terminal ⇒ the fill is still outstanding unsettled exposure (not excluded).
+    fills = [_fill("mk-buy", Decimal("10"))]
+    buckets = [
+        _bucket(0, SettlementStatus.CONFIRMED),
+        _bucket(1, SettlementStatus.RETRYING),
+    ]
+    assert gross_unconfirmed_fill_quantity(fills, buckets) == Decimal("10")
+
+
+def test_gross_unconfirmed_empty_is_zero() -> None:
+    assert gross_unconfirmed_fill_quantity([], []) == Decimal("0")

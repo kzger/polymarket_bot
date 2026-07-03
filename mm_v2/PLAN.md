@@ -171,6 +171,8 @@ collateral_reserved_cap
 pending_ctf_operation_cap
 unconfirmed_fill_cap
 ```
+`unconfirmed_fill_cap` is measured on **gross** outstanding unsettled-fill quantity (never the net of offsetting fills — a still-unsettled BUY_YES + SELL_YES do not cancel). `InventoryState.matched_unconfirmed_fill_gross` carries it, populated by the ledger fold via `domain.fill.gross_unconfirmed_fill_quantity` (deduped by logical-fill key; terminality aggregated across **all** of a trade's buckets per §3.2). It is a **cap-only** basis, deliberately outside the frozen `shadow_owned_*` / `available_*` accessors (Contract #3).
+
 **Worst case = a *subset* of orders filling, not all.** With current `D₀`:
 ```
 U₊ = Q(BUY_YES) + Q(SELL_NO)

@@ -97,7 +97,7 @@ def test_caps_violations_flags_each_breached_cap() -> None:
         collateral_reserved_for_bids=Decimal("20"),  # > 10
         pending_splits=Decimal("2"),
         pending_merges=Decimal("2"),  # 4 > 3
-        matched_unconfirmed_yes=Decimal("3"),  # 3 > 2
+        matched_unconfirmed_fill_gross=Decimal("3"),  # 3 > 2
     )
     violations = caps_violations(inv, limits)
     joined = " ".join(violations).lower()
@@ -216,3 +216,50 @@ def test_assess_new_order_sell_is_not_projected_as_paired_increase() -> None:
         inv, limits, {}, ExposureRoute.SELL_YES, Decimal("6"), d0=Decimal("0")
     )
     assert decision.approved is True
+
+
+def test_caps_unconfirmed_uses_gross_not_net_of_offsetting_fills() -> None:
+    # BUY_YES 10 and SELL_YES 10, both still unsettled, net to 0 in the signed
+    # field but are 20 of GROSS outstanding unsettled fills → the cap must trip.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        unconfirmed_fill_cap=Decimal("5"),
+    )
+    inv = InventoryState(
+        matched_unconfirmed_yes=Decimal("0"),  # +10 buy, -10 sell → net 0
+        matched_unconfirmed_fill_gross=Decimal("20"),
+    )
+    assert any("unconfirmed" in v.lower() for v in caps_violations(inv, limits))
+
+
+def test_assess_new_order_rejects_buy_that_pushes_gross_over_unconfirmed_cap() -> None:
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        paired_inventory_cap=Decimal("100"),
+        unconfirmed_fill_cap=Decimal("5"),
+    )
+    inv = InventoryState(matched_unconfirmed_fill_gross=Decimal("4"))
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.BUY_YES, Decimal("3"), d0=Decimal("0")
+    )  # gross 4 + 3 = 7 > 5
+    assert decision.approved is False
+    assert any("unconfirmed" in v.lower() for v in decision.violations)
+
+
+def test_assess_new_order_rejects_sell_that_pushes_gross_over_unconfirmed_cap() -> None:
+    # A SELL fill is also outstanding unsettled exposure, so it must project into
+    # the gross unconfirmed cap even though it does not raise paired inventory.
+    limits = RiskLimits(
+        directional_unmatched_limit=Decimal("100"),
+        paired_inventory_cap=Decimal("100"),
+        unconfirmed_fill_cap=Decimal("5"),
+    )
+    inv = InventoryState(
+        yes_free=Decimal("10"),  # tokens to sell
+        matched_unconfirmed_fill_gross=Decimal("4"),
+    )
+    decision = assess_new_order(
+        inv, limits, {}, ExposureRoute.SELL_YES, Decimal("3"), d0=Decimal("0")
+    )  # gross 4 + 3 = 7 > 5
+    assert decision.approved is False
+    assert any("unconfirmed" in v.lower() for v in decision.violations)
