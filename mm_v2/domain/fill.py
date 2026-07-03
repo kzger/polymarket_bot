@@ -229,13 +229,23 @@ def gross_unconfirmed_fill_quantity(
     growth.
 
     ``buckets`` MUST be the current authoritative set for the trades in ``fills``
-    (all known buckets from ledger state), and the result recomputed on each
-    update — passing only a newly-arrived bucket could transiently drop a fill
-    whose other bucket is still open.
+    (all known buckets from ledger state), in chronological (append) order, and
+    the result recomputed on each update — passing only a newly-arrived bucket
+    could transiently drop a fill whose other bucket is still open.
+
+    The immutable ledger keeps the full history of a bucket's status updates
+    (e.g. ``MINED`` then ``CONFIRMED``), so buckets are first collapsed to the
+    LATEST status per ``(trade_id, bucket_index)`` — last write wins; the tx hash
+    is filled in as the bucket progresses, so it is NOT part of the collapse key —
+    before per-trade aggregation, otherwise stale updates would keep a settled
+    trade non-terminal forever.
     """
-    statuses_by_trade: dict[str, list[SettlementStatus]] = {}
+    latest_by_bucket: dict[tuple[str, int], SettlementStatus] = {}
     for b in buckets:
-        statuses_by_trade.setdefault(b.trade_id, []).append(b.status)
+        latest_by_bucket[(b.trade_id, b.bucket_index)] = b.status
+    statuses_by_trade: dict[str, list[SettlementStatus]] = {}
+    for (trade_id, _), status in latest_by_bucket.items():
+        statuses_by_trade.setdefault(trade_id, []).append(status)
 
     best_by_key: dict[LogicalFillKey, LogicalFill] = {}
     for f in fills:

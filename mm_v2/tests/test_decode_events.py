@@ -369,6 +369,23 @@ def test_decode_market_resolved() -> None:
     assert parsed.winning_outcome is Outcome.YES
 
 
+def test_decode_market_resolved_falls_back_to_market_for_condition_id() -> None:
+    # Real market_resolved frames carry the condition id in `market` and may omit
+    # `condition_id`; the decoder must use `market` (not fall straight through to
+    # the envelope, which can be unset → the literal "None").
+    rec = make_event(
+        SourceKind.MARKET_WS,
+        "market_resolved",
+        {"market": "0xcond-from-market", "winning_outcome": "NO"},
+    )
+
+    parsed = decode_recorded_event(rec)
+
+    assert isinstance(parsed, MarketResolved)
+    assert parsed.condition_id == "0xcond-from-market"
+    assert parsed.winning_outcome is Outcome.NO
+
+
 def test_decode_market_resolved_allows_unknown_winner() -> None:
     # Resolution can arrive before the winning outcome is known/populated.
     rec = make_event(SourceKind.MARKET_WS, "market_resolved", {"condition_id": CONDITION})

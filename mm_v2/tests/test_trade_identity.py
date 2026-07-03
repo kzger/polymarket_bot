@@ -363,6 +363,29 @@ def test_gross_unconfirmed_empty_is_zero() -> None:
     assert gross_unconfirmed_fill_quantity([], []) == Decimal("0")
 
 
+def test_gross_unconfirmed_collapses_bucket_history_to_latest() -> None:
+    # The immutable ledger keeps a bucket's status-update history: the SAME bucket
+    # (index 0) appears first MINED then CONFIRMED. Collapsing to the latest per
+    # bucket makes the trade terminal → the fill is released from the cap.
+    fills = [_fill("mk-buy", Decimal("10"))]
+    buckets = [
+        _bucket(0, SettlementStatus.MINED),  # earlier update
+        _bucket(0, SettlementStatus.CONFIRMED),  # latest update, same bucket
+    ]
+    assert gross_unconfirmed_fill_quantity(fills, buckets) == Decimal("0")
+
+
+def test_gross_unconfirmed_does_not_collapse_distinct_bucket_indices() -> None:
+    # Distinct bucket indices must NOT collapse: bucket 0 CONFIRMED + bucket 1
+    # still MINED → trade not terminal → fill still counted.
+    fills = [_fill("mk-buy", Decimal("10"))]
+    buckets = [
+        _bucket(0, SettlementStatus.CONFIRMED),
+        _bucket(1, SettlementStatus.MINED),
+    ]
+    assert gross_unconfirmed_fill_quantity(fills, buckets) == Decimal("10")
+
+
 def test_gross_unconfirmed_ws_only_fill_stays_unconfirmed_if_ws_confirmed() -> None:
     # A User WS update may report CONFIRMED before the REST poll produces bucket
     # rows. Without bucket proof the fill stays unconfirmed (Contract #1b/#4:

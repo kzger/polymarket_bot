@@ -420,7 +420,9 @@ def _decode_market(event: RecordedEvent) -> ParsedRecordedEvent:
     if et == recorder.EVENT_MARKET_RESOLVED:
         winner = p.get("winning_outcome")
         return MarketResolved(
-            condition_id=str(p.get("condition_id", event.condition_id)),
+            # market_resolved carries the condition id in `market` and may omit
+            # `condition_id`; fall back to `market` before the recorder envelope.
+            condition_id=str(p.get("condition_id", p.get("market", event.condition_id))),
             winning_outcome=_parse_outcome(winner) if winner else None,
             timestamp=opt_int(p.get("timestamp")),
         )
