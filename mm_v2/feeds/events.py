@@ -296,8 +296,14 @@ def _parse_outcome(value: Any) -> Outcome:
 
 
 def _parse_settlement_status(value: Any) -> SettlementStatus:
+    # The REST /data/trades endpoint reports protobuf-style names
+    # (TRADE_STATUS_CONFIRMED); the User WS uses the bare form (CONFIRMED). Accept
+    # both — dropping a documented prefix (exact wire form is M0-verifiable, §11).
+    token = str(value).strip().upper()
+    if token.startswith("TRADE_STATUS_"):
+        token = token[len("TRADE_STATUS_") :]
     try:
-        return SettlementStatus(str(value).strip().upper())
+        return SettlementStatus(token)
     except ValueError as exc:
         raise DecodeError(f"unknown settlement status: {value!r}") from exc
 

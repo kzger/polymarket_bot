@@ -423,6 +423,48 @@ def test_decode_synthetic_marker_unknown_kind_raises() -> None:
         decode_recorded_event(rec)
 
 
+def test_decode_rest_trade_accepts_prefixed_status() -> None:
+    # The CLOB /data/trades endpoint reports protobuf-style status names, e.g.
+    # TRADE_STATUS_CONFIRMED. The decoder must accept them — else no settlement
+    # bucket is produced and WS fills never reconcile terminal.
+    rec = make_event(
+        SourceKind.REST_SNAPSHOT,
+        "trade",
+        {
+            "trade_id": "trade-1",
+            "taker_order_id": "taker-1",
+            "asset_id": YES_TOK,
+            "market": CONDITION,
+            "side": "BUY",
+            "outcome": "YES",
+            "price": "0.52",
+            "size": "100",
+            "status": "TRADE_STATUS_CONFIRMED",
+            "bucket_index": "0",
+            "transaction_hash": "0xdeadbeef",
+            "match_time": "1700000000",
+            "maker_orders": [
+                {
+                    "order_id": "maker-A",
+                    "matched_amount": "100",
+                    "owner": "0xowner",
+                    "maker_address": "0xmaker",
+                    "asset_id": YES_TOK,
+                    "outcome": "YES",
+                    "price": "0.52",
+                    "fee_rate_bps": "0",
+                    "side": "SELL",
+                }
+            ],
+        },
+    )
+
+    parsed = decode_recorded_event(rec)
+
+    assert isinstance(parsed, RestTradeEvent)
+    assert parsed.status is SettlementStatus.CONFIRMED
+
+
 def test_decode_unknown_event_type_raises_decode_error() -> None:
     rec = make_event(SourceKind.MARKET_WS, "nonsense_event", {"market": CONDITION})
     with pytest.raises(DecodeError):
