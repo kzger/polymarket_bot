@@ -55,6 +55,28 @@ def _ws_maker_side(taker_side: Side, convention: TradeSideConvention) -> Side:
     return taker_side
 
 
+def _rest_taker_fill(trade: RestTradeEvent) -> LogicalFill:
+    """Synthesize the user's fill from a REST taker row's top-level fields.
+
+    When ``trader_side == "TAKER"`` the ``maker_orders`` are the COUNTERPARTIES,
+    so our fill is the top-level row, keyed ``(trade_id, taker_order_id)`` per
+    Contract #4 (bucket-scoped, like every REST fill).
+    """
+    return LogicalFill(
+        trade_id=trade.trade_id,
+        maker_order_id=trade.taker_order_id,  # Contract #4 generic order_id
+        taker_order_id=trade.taker_order_id,
+        asset_id=trade.asset_id,
+        outcome=trade.outcome,
+        side=trade.side,
+        price=trade.price,
+        size=trade.size,
+        match_time=trade.match_time,
+        status=trade.status,
+        status_scope=StatusScope.BUCKET,
+    )
+
+
 def derive_logical_fills(
     trade: TradeEvent,
     *,
@@ -78,14 +100,18 @@ def derive_logical_fills(
     ``ws_side_convention`` keeps WS trade-side semantics configurable until an M0
     probe proves them (PLAN §8); REST maker fills carry their own explicit side.
 
-    **REST top-level taker fills (Contract #4).** A ``/data/trades`` row can carry
-    the user's fill on the top-level row with empty ``maker_orders`` and
-    ``trader_side == "TAKER"``. In that case one fill is synthesized from the
-    top-level fields, keyed ``(trade_id, taker_order_id)``. An empty-``maker_orders``
-    REST row that is NOT a confirmed TAKER raises :class:`UnattributableRestFillError`
+    **REST top-level taker fills (Contract #4).** When a ``/data/trades`` row has
+    ``trader_side == "TAKER"`` the ``maker_orders`` are the COUNTERPARTIES, not
+    ours — regardless of whether that list is empty or populated — so our single
+    fill is synthesized from the top-level fields, keyed ``(trade_id,
+    taker_order_id)``, and the maker loop is skipped. An empty-``maker_orders`` REST
+    row that is NOT a confirmed TAKER raises :class:`UnattributableRestFillError`
     (never a silent drop). For a given trade the user is maker **XOR** taker, so a
-    synthesized taker-keyed fill and per-maker fills never coexist — no double count.
+    taker-keyed fill and per-maker fills never coexist — no double count.
     """
+    if isinstance(trade, RestTradeEvent) and trade.trader_side == "TAKER":
+        return [_rest_taker_fill(trade)]
+
     is_rest = isinstance(trade, RestTradeEvent)
     status_scope = StatusScope.BUCKET if is_rest else StatusScope.LOGICAL_TRADE
     fills: list[LogicalFill] = []
@@ -112,31 +138,13 @@ def derive_logical_fills(
         )
 
     if isinstance(trade, RestTradeEvent) and not trade.maker_orders:
-        # Empty maker_orders: the user's fill (if any) is the top-level row. Only
-        # a confirmed TAKER row is safe to attribute (§11 M0-verify); anything else
-        # is raised loudly rather than silently dropped.
-        if trade.trader_side == "TAKER":
-            fills.append(
-                LogicalFill(
-                    trade_id=trade.trade_id,
-                    maker_order_id=trade.taker_order_id,  # Contract #4 generic order_id
-                    taker_order_id=trade.taker_order_id,
-                    asset_id=trade.asset_id,
-                    outcome=trade.outcome,
-                    side=trade.side,
-                    price=trade.price,
-                    size=trade.size,
-                    match_time=trade.match_time,
-                    status=trade.status,
-                    status_scope=StatusScope.BUCKET,
-                )
-            )
-        else:
-            raise UnattributableRestFillError(
-                f"REST trade {trade.trade_id!r} has empty maker_orders and "
-                f"trader_side={trade.trader_side!r} (not TAKER); cannot attribute "
-                f"the user fill"
-            )
+        # Empty maker_orders and not a confirmed TAKER (that returned above): the
+        # user's fill cannot be attributed → raise loudly, never a silent drop.
+        raise UnattributableRestFillError(
+            f"REST trade {trade.trade_id!r} has empty maker_orders and "
+            f"trader_side={trade.trader_side!r} (not TAKER); cannot attribute "
+            f"the user fill"
+        )
     return fills
 
 

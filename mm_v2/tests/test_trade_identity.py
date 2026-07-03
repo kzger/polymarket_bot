@@ -415,6 +415,28 @@ def test_rest_taker_fill_synthesized_when_maker_orders_empty() -> None:
     assert f.status_scope is StatusScope.BUCKET
 
 
+def test_rest_taker_fill_uses_top_level_even_when_maker_orders_present() -> None:
+    # When the user is the TAKER, maker_orders are the COUNTERPARTIES; our fill is
+    # the top-level taker row — never the maker orders (else we'd book their IDs /
+    # side / size as our inventory).
+    counterparties = [
+        {"order_id": "cp-1", "matched_amount": "60", "owner": "0xother",
+         "maker_address": "0xother", "asset_id": YES_TOK, "outcome": "YES",
+         "price": "0.52", "fee_rate_bps": "0", "side": "SELL"},
+        {"order_id": "cp-2", "matched_amount": "40", "owner": "0xother",
+         "maker_address": "0xother", "asset_id": YES_TOK, "outcome": "YES",
+         "price": "0.52", "fee_rate_bps": "0", "side": "SELL"},
+    ]
+    fills = derive_logical_fills(
+        _rest_row(trader_side="TAKER", maker_orders=counterparties)
+    )
+    assert len(fills) == 1
+    f = fills[0]
+    assert f.maker_order_id == TAKER  # our top-level order, not cp-1/cp-2
+    assert f.side is Side.BUY  # top-level taker side, not the makers' SELL
+    assert f.size == Decimal("100")  # top-level size, not 60/40
+
+
 def test_rest_empty_maker_non_taker_raises_loud() -> None:
     with pytest.raises(UnattributableRestFillError):
         derive_logical_fills(_rest_row(trader_side="MAKER"))
