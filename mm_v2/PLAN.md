@@ -429,7 +429,8 @@ RELAYER_API_KEY_ADDRESS
 RELAYER_HOST=https://relayer-v2.polymarket.com
 # Funding: small pUSD on Polygon (CLOB V2 replaced USDC.e). Gas: none if relayer (gasless);
 #   POL/MATIC only for direct on-chain split/merge/redeem. Trading allowances enabled.
-# NOTE: requirements.txt pins v1 py-clob-client (>=0.18) — must migrate to the §11-chosen v2 stack before M0.
+# NOTE: the repo installs NO CLOB client (pyproject dependencies are empty; the v1 py-clob-client and the
+#   rest of the retired v1 stack were removed). Add ONLY the §11-chosen v2 stack when M0 starts.
 ```
 
 ---
