@@ -1,9 +1,6 @@
 # Polymarket RBI Bot
 
-This repository now has two parts:
-
-- `mm_v2/` is the planned clean rewrite: a Polymarket-native, passive market-making system driven by Polymarket market/user data.
-- `strategies/`, `bot/`, `backtesting/`, and `deploy/` are retired legacy reference code for the original ETH-signal RBI bot.
+`mm_v2/` is the system: a Polymarket-native, passive market-making implementation driven by Polymarket market/user data. The original ETH-signal RBI bot (`strategies/`, `bot/`, `backtesting/`, `deploy/`, `data/`, `config/`, `incubation/`, `tests/`) has been removed.
 
 `mm_v2/PLAN.md` is the authoritative specification. Read it before implementing new system code.
 
@@ -20,7 +17,6 @@ Use `uv` for all Python work:
 uv venv
 uv sync
 uv run pytest
-uv run python deploy/run_backtest.py
 ```
 
 Do not use bare `python`, `pip`, or `pytest` for repository commands.
@@ -30,13 +26,7 @@ Do not use bare `python`, `pip`, or `pytest` for repository commands.
 | Path | Status | Purpose |
 |---|---|---|
 | `mm_v2/PLAN.md` | Authoritative spec | Current plan for the Polymarket-native market maker. |
-| `mm_v2/` | New work area | New implementation should be built here according to `PLAN.md`. |
-| `strategies/` | Retired reference | Legacy MACD/RSI/CVD strategies. Do not extend for `mm_v2`. |
-| `bot/` | Retired reference | Legacy order, position, risk, and trader loop code. |
-| `backtesting/` | Retired reference | Legacy candle-based backtesting. |
-| `data/` | Retired/reference utilities | Legacy Binance/Polymarket data helpers. |
-| `tests/` | Legacy tests | Tests for retired legacy modules. |
-| `suggestion*.md` | Design history | Review rounds that led to `mm_v2/PLAN.md`. |
+| `mm_v2/` | Implementation | The system, built according to `PLAN.md`. Tests live in `mm_v2/tests/`. |
 
 ## Current Direction
 
@@ -88,48 +78,15 @@ Run tests:
 uv run pytest
 ```
 
-Run legacy backtest tooling when needed for reference only:
-
-```powershell
-uv run python deploy/run_backtest.py
-```
-
 ## Configuration
 
 Use `.env.example` as a template. Do not commit real credentials.
 
 Live `mm_v2` work requires explicit user authorization and the M0 credential set described in `mm_v2/PLAN.md` §12. Type-3 deposit-wallet order placement remains an SDK/protocol-stack gate in M0; do not assume any client path works until conformance proves it.
 
-## New Session Prompt
-
-Use this prompt to start an implementation session:
-
-```text
-You are implementing the Polymarket-native mm_v2 system in this repo.
-
-First read AGENTS.md, CLAUDE.md, README.md, and mm_v2/PLAN.md fully. Treat mm_v2/PLAN.md as the single source of truth. Do not redesign the strategy direction and do not modify legacy directories unless explicitly asked.
-
-Important constraints:
-- Use uv for all Python environment creation and execution: uv venv, uv sync, uv run pytest, uv run python ...
-- The legacy strategies/, bot/, backtesting/, deploy/ code is retired reference only.
-- Frozen contracts in mm_v2/PLAN.md §10 must be implemented exactly: Contract #1 RecordedEvent, #1b ParsedRecordedEvent/decode_recorded_event, #2 ExchangePort/CtfPort, #3 inventory balance basis, #4 settlement identity.
-- If any external fact conflicts with PLAN.md, add a proposal to §11 Open decisions instead of silently diverging in code.
-- No live trading or credential use unless the task explicitly enters M0 or M2.5 and credentials are provided.
-
-Start with no-credential work:
-1. Build mm_v2 package skeleton for WS-A/WS-B/WS-C.
-2. Implement typed contract models and pure domain types first.
-3. Add focused tests for inventory math, reachable risk interval, parsed market/user events, WS-vs-REST trade identity, and post-only request invariants.
-4. Run uv run pytest and report exact results.
-
-Keep changes scoped and report modified files plus verification output.
-```
-
 ## Reference Files
 
 - `mm_v2/PLAN.md`: authoritative implementation plan.
-- `suggestion.md`, `suggestion2.md`, `suggestion3.md`: design discussion history.
-- `polymarket_requirement.md`: original requirements notes.
 
 ## License
 

@@ -171,6 +171,10 @@ collateral_reserved_cap
 pending_ctf_operation_cap
 unconfirmed_fill_cap
 ```
+`unconfirmed_fill_cap` is measured on **gross** outstanding unsettled-fill quantity (never the net of offsetting fills — a still-unsettled BUY_YES + SELL_YES do not cancel). `InventoryState.matched_unconfirmed_fill_gross` carries it, populated by the ledger fold via `domain.fill.gross_unconfirmed_fill_quantity` (deduped by logical-fill key; terminality aggregated across **all** of a trade's buckets per §3.2). It is a **cap-only** basis, deliberately outside the frozen `shadow_owned_*` / `available_*` accessors (Contract #3).
+
+The **fill-based** caps (`unconfirmed_fill_cap` gross, and `paired_inventory_cap`) are projected on the **reachable** set in `assess_new_order` — the resting orders in `pending_by_route` plus the candidate — because they accrue at fill (same basis as the directional interval): gross sums all reachable-route fills; paired adds reachable BUY fills per outcome side. `collateral_reserved_cap` is the exception — collateral is reserved at *placement*, so resting bids are already counted and only the candidate's marginal reservation is projected.
+
 **Worst case = a *subset* of orders filling, not all.** With current `D₀`:
 ```
 U₊ = Q(BUY_YES) + Q(SELL_NO)
@@ -272,17 +276,23 @@ Must test on our actual wallet/SDK (do not assume):
   TickSizeChange     : asset_id, market, old_tick_size, new_tick_size, timestamp
   BestBidAsk         : asset_id, market, best_bid, best_ask, timestamp        # custom_feature_enabled
   MarketResolved     : condition_id, ...                                       # custom_feature_enabled
+  NewMarket          : condition_id, asset_ids[], timestamp                    # custom_feature_enabled; v1 ignores (decoded so the shared decode path stays total)
   # User channel (WebSocket — live; NO bucket/tx metadata, do not assume it)
   UserOrderEvent     : order_id, asset_id, market, type(PLACEMENT|UPDATE|CANCELLATION), price, size, size_matched, status, timestamp
 UserTradeWsEvent   : trade_id, taker_order_id, asset_id, market, side, outcome, price, size, status, maker_orders[WsMakerOrderFill], match_time, last_update?, timestamp
   # REST trades endpoint — carries settlement/bucket metadata (Contract #4)
-RestTradeEvent     : trade_id, taker_order_id, asset_id, market, side, outcome, price, size, status, maker_orders[RestMakerOrderFill], bucket_index, transaction_hash, match_time, timestamp
+RestTradeEvent     : trade_id, taker_order_id, asset_id, market, side, outcome, price, size, status, maker_orders[RestMakerOrderFill], bucket_index, transaction_hash, match_time, timestamp, trader_side?
+                       #   trader_side = user ROLE ("MAKER"/"TAKER"), distinct from side (BUY/SELL); discriminates a
+                       #   top-level taker fill when maker_orders is empty (Contract #4 top-level-fill capture)
 WsMakerOrderFill   : order_id, matched_amount, owner, asset_id, outcome, price
 RestMakerOrderFill : order_id, matched_amount, owner, maker_address, asset_id, outcome, price, fee_rate_bps, side
   # NOTE: all WS numeric fields arrive as JSON strings → the decode boundary normalizes types.
-  #   Logical fill (Contract #4) is DERIVED from maker_orders[]; bucket settlement updates ONLY from a
-  #   RestTradeEvent (or later status carrying bucket metadata). WS-only fills stay unconfirmed — the
-  #   parser must NOT fabricate bucket_index/transaction_hash that the WS frame does not contain.
+  #   Logical fill (Contract #4) is DERIVED from maker_orders[] when the user is the MAKER; when the
+  #   user is the TAKER (REST trader_side == "TAKER", or WS taker_order_id ∈ the caller's own-order-id
+  #   set) the single fill is the top-level row keyed (trade_id, taker_order_id) — maker_orders are the
+  #   counterparties. Bucket settlement updates ONLY from a RestTradeEvent (or later status carrying
+  #   bucket metadata). WS-only fills stay unconfirmed — the parser must NOT fabricate
+  #   bucket_index/transaction_hash that the WS frame does not contain.
   # Recorder-internal
   RestSnapshot       : asset_id, bids[], asks[], hash, snapshot_id, server_ts
   SyntheticMarker    : kind(RECONNECT|UNSYNCED|GAP|HEARTBEAT_MISS), detail
@@ -368,6 +378,12 @@ Suggested ownership: one agent per workstream. WS-A/B/C can all start now. WS-D 
 
 - **Edge positioning:** UNDECIDED until M2.5. Default stance = defensive reward-aware; classify per market. Do not pre-commit.
 - **Protocol stack freeze (OPEN — must resolve before M0; supersedes the old "start on `py-clob-client`" note).** CLOB V2 is live and **v1 is unsupported** (§8), so v1 is off the table. Decide before M0: (a) **client** — `py-sdk` (beta) / `py-clob-client-v2` / `ts-sdk` / `rs-clob-client-v2` / direct REST; **none is a known-good type-3 path** (§8 — #70 affects Python, TS *and* Rust), so each must pass the M0 `create/derive key → sign → postOrder → cancel → user WS` probe before selection; (b) **wallet/signing** — type-3 deposit-wallet (no working SDK today) vs falling back to an existing **type-1/2 proxy/Safe** account for the canary (the only confirmed-working paths); (c) **CTF execution** — direct on-chain vs relayer (gasless). All three sit behind `ExchangePort`/`CtfPort` (Contract #2) so the choice doesn't leak into domain/strategy. The M0 conformance harness exists precisely to make this decision empirically.
+- **REST-trade `source_kind` interpretation (recorded, not a contract change).** Contract #1's `source_kind` enum stays frozen at `market_ws | user_ws | rest_snapshot | synthetic_marker`. The REST trades endpoint (`RestTradeEvent`, Contract #1b/#4) is recorded as `source_kind=rest_snapshot` + `event_type='trade'`; `decode_recorded_event` distinguishes it from a WS trade by `(source_kind, event_type)`. If a dedicated `rest_trades` source_kind is later wanted, that is a Contract #1 change (bump `schema_version`) — flagging here first per process.
+- **`price_change` delta array field (M0-verify, defensively handled).** Live market WS `price_change` frames carry the delta array under `price_changes`; `decode_recorded_event` reads `price_changes` with `changes` as a fallback (mirrors the `bids/asks`↔`buys/sells` fallback in `_book_sides`). Confirm the exact field on our socket in M0 and drop the fallback once frozen. Not a contract change — the parsed `MarketPriceChange` shape is unchanged.
+- **Settlement-status wire form (M0-verify, defensively handled).** The REST `/data/trades` endpoint reports protobuf-style status names (`TRADE_STATUS_CONFIRMED`), while the User WS uses the bare form (`CONFIRMED`). `_parse_settlement_status` strips a leading `TRADE_STATUS_` prefix so both decode to the same frozen `SettlementStatus`. Without this, REST rows raise `DecodeError` → no `SettlementBucket` → WS fills never reconcile terminal (they'd stay in `unconfirmed_fill_cap` forever). Confirm the exact form per channel in M0. Not a contract change — the `SettlementStatus` enum is unchanged.
+- **REST top-level taker-fill capture (Contract #1b additive; M0-verify).** On a `/data/trades` row the user's own fill is the top-level row when `trader_side == "TAKER"` — the `maker_orders` there are the COUNTERPARTIES (whether that list is empty or populated), so they must NOT be booked as ours. `RestTradeEvent` now preserves `trader_side` (parser_version bumped to 2); `derive_logical_fills` synthesizes one top-level `LogicalFill` (keyed by `taker_order_id`) for a `TAKER` and skips the maker loop, uses the per-maker path when the user is the maker, and raises `UnattributableRestFillError` on an empty-`maker_orders` row that is not a confirmed TAKER (loud, never a silent drop). The reconciler (WS-D) MUST catch that **per row** — emit a marker and continue the poll. Dedup invariant: the user is maker XOR taker per trade, so taker-keyed and maker-keyed fills never both represent the same fill. M0 must verify that `trader_side` reliably marks the user's role and that populated `maker_orders` carries the user's fills when the user is the maker.
+- **WS top-level taker-fill capture (no contract change; M0-verify).** A User WS trade frame carries NO `trader_side`, so taker-ness is detected against a caller-supplied own-order-id set (from placement acks / `UserOrderEvent`s): `taker_order_id` ∈ set ⇒ we are the taker ⇒ ONE top-level fill keyed `(trade_id, taker_order_id)` (LOGICAL_TRADE scope — no buckets; stays in `unconfirmed_fill_cap` until REST buckets prove terminality), maker loop skipped; otherwise the maker loop is filtered to our own `maker_orders` entries; set provided but nothing matches ⇒ `UnattributableWsFillError` (loud — the live handler catches **per event**, emits a marker, continues). The WS taker side goes through the §8 `TradeSideConvention` knob like the maker side (never hard-coded while §8 is unproven). `our_order_ids=None` keeps the undiscriminated legacy booking. M0-verify: the ENTIRE role/settlement field shape of User WS trade frames is unproven — the docs/API reference are inconsistent about whether trade frames carry `trader_side` or bucket fields, and `owner`/`trade_owner` semantics are not defined tightly enough to justify decoding them (recorded as a possible future signal, not decoded); also verify whether `maker_orders` on the user channel can contain other makers' orders (the filter defends either way).
+- **`new_market` decode path (Contract #1b additive; M0-verify).** Subscribing the market channel with `custom_feature_enabled: true` (needed for `best_bid_ask`/`market_resolved`) also emits `new_market` frames; previously `_decode_market` raised `DecodeError` on them, aborting the SHARED recorder/replay decode path on a normal public-market event. Now decoded as a typed `NewMarket` union member (`condition_id`, `asset_ids[]`, `timestamp`) — v1 ignores it; consumers skip members they don't use. Wire keys per docs: the token array is spelled `assets_ids` (sic), with `clob_token_ids` accepted as fallback, normalized into `asset_ids`. `parser_version` bumped to 3 (decode changed; envelope unchanged ⇒ `schema_version` stays 1). Truly unknown market event types still raise `DecodeError`. M0-verify the exact payload shape.
 - (Add proposals here rather than diverging in code.)
 
 **Applied in review #1 (2026-06-30), verified vs official CLOB V2 docs — now frozen, not open:**
@@ -413,11 +429,8 @@ RELAYER_API_KEY_ADDRESS
 RELAYER_HOST=https://relayer-v2.polymarket.com
 # Funding: small pUSD on Polygon (CLOB V2 replaced USDC.e). Gas: none if relayer (gasless);
 #   POL/MATIC only for direct on-chain split/merge/redeem. Trading allowances enabled.
-# NOTE: requirements.txt pins v1 py-clob-client (>=0.18) — must migrate to the §11-chosen v2 stack before M0.
+# NOTE: the repo installs NO CLOB client (pyproject dependencies are empty; the v1 py-clob-client and the
+#   rest of the retired v1 stack were removed). Add ONLY the §11-chosen v2 stack when M0 starts.
 ```
 
 ---
-
-## References
-- Round-by-round design dialogue: `../suggestion.md`, `../suggestion2.md`, `../suggestion3.md` (root).
-- Legacy system (reference only): `../strategies/`, `../bot/`, `../backtesting/`.

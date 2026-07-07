@@ -13,7 +13,7 @@ This file records Codex-specific operating rules. For project overview, commands
   - `uv run pytest`
   - `uv run python <script>`
 - Treat `mm_v2/PLAN.md` as the authoritative specification for the new Polymarket-native market-making system.
-- Do not modify retired legacy directories (`strategies/`, `bot/`, `backtesting/`, `deploy/`) unless the user explicitly asks for legacy work.
+- The retired legacy ETH-signal bot (`strategies/`, `bot/`, `backtesting/`, `deploy/`, `data/`, `config/`, `incubation/`, `tests/`) has been removed; `mm_v2/` is the only implementation.
 - Do not silently diverge from frozen contracts in `mm_v2/PLAN.md` §10. If a contract needs to change, propose it in §11 first.
 - Keep scratch notes and generated work-in-progress artifacts under `agent_workspace/for_codex/`.
 - Do not commit `.env`, `.venv`, `.pytest_cache`, `__pycache__`, `.serena`, `.codegraph`, crash dumps, downloaded market data, or credentials.

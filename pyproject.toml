@@ -1,18 +1,12 @@
 [project]
 name = "polymarket-rbi-bot"
 version = "0.1.0"
-description = "Polymarket-native market making research and legacy RBI bot reference code."
+description = "Polymarket-native, passive market-making system (mm_v2)."
 requires-python = ">=3.12"
-dependencies = [
-  "ccxt>=4.3.0",
-  "numpy>=1.26.0",
-  "pandas>=2.2.0",
-  "py-clob-client>=0.18.0",
-  "pydantic>=2.6.0",
-  "pydantic-settings>=2.2.0",
-  "python-dotenv>=1.0.0",
-  "ta>=0.11.0",
-]
+# mm_v2 is stdlib-only so far (WS-A/B/C need no credentials and no client).
+# Do NOT re-add a CLOB client until the §11 protocol-stack decision picks the
+# v2 stack in M0 — the v1 py-clob-client is unsupported on CLOB V2 (PLAN §8/§11).
+dependencies = []
 
 [dependency-groups]
 dev = [
@@ -20,5 +14,5 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["mm_v2/tests"]
 python_files = ["test_*.py"]
