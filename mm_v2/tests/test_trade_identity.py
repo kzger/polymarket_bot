@@ -22,6 +22,7 @@ import pytest
 
 from mm_v2.accounting.inventory_ledger import (
     UnattributableRestFillError,
+    UnattributableWsFillError,
     derive_logical_fills,
     derive_settlement_buckets,
 )
@@ -478,3 +479,58 @@ def test_rest_populated_maker_orders_never_also_synthesizes_taker_fill() -> None
     keys = {f.maker_order_id for f in fills}
     assert keys == {MAKER_A, MAKER_B}
     assert TAKER not in keys
+
+
+# --- WS top-level taker-fill capture (own-order-id set) ----------------------
+def test_ws_taker_trade_yields_single_top_level_fill() -> None:
+    # An M0 FOK/FAK probe: the WS trade's taker_order_id is OURS, so the
+    # maker_orders are counterparties and must not be booked as our fills.
+    fills = derive_logical_fills(_ws_trade(), our_order_ids={TAKER})
+    assert len(fills) == 1
+    f = fills[0]
+    assert f.key == logical_fill_key(TRADE_ID, TAKER)
+    assert f.side is Side.BUY  # top-level taker side (TAKER_SIDE convention)
+    assert f.size == Decimal("100")  # top-level size, not the 60/40 maker splits
+    assert f.status_scope is StatusScope.LOGICAL_TRADE  # WS: no buckets
+
+
+def test_ws_taker_fill_key_matches_rest_taker_fill() -> None:
+    # Contract #4: the WS taker fill and the later REST TAKER row must land on
+    # the same logical-fill key so the ledger dedups across sources.
+    ws = derive_logical_fills(_ws_trade(), our_order_ids={TAKER})
+    rest = derive_logical_fills(_rest_row(trader_side="TAKER"))
+    assert ws[0].key == rest[0].key
+
+
+def test_ws_taker_side_respects_side_convention() -> None:
+    # §8: WS trade-side semantics stay configurable on the taker path too.
+    fills = derive_logical_fills(
+        _ws_trade(),
+        ws_side_convention=TradeSideConvention.MAKER_SIDE,
+        our_order_ids={TAKER},
+    )
+    assert fills[0].side is Side.SELL
+
+
+def test_ws_maker_orders_filtered_to_ours() -> None:
+    # We are one maker among several: only OUR maker entry is booked.
+    fills = derive_logical_fills(_ws_trade(), our_order_ids={MAKER_A})
+    assert [f.maker_order_id for f in fills] == [MAKER_A]
+
+
+def test_ws_no_matching_order_raises_loud() -> None:
+    with pytest.raises(UnattributableWsFillError):
+        derive_logical_fills(_ws_trade(), our_order_ids={"someone-else"})
+
+
+def test_ws_without_order_set_keeps_legacy_maker_booking() -> None:
+    # our_order_ids=None (default) preserves the pre-existing behavior.
+    fills = derive_logical_fills(_ws_trade())
+    assert {f.maker_order_id for f in fills} == {MAKER_A, MAKER_B}
+
+
+def test_ws_taker_fill_counts_as_unconfirmed_gross() -> None:
+    # The probe's fill has no buckets yet, so the gross unconfirmed cap must
+    # hold it (§3.2 / Contract #4).
+    fills = derive_logical_fills(_ws_trade(), our_order_ids={TAKER})
+    assert gross_unconfirmed_fill_quantity(fills, []) == Decimal("100")

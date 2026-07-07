@@ -154,6 +154,22 @@ class MarketResolved:
     timestamp: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class NewMarket:
+    """A market created while subscribed (``custom_feature_enabled``).
+
+    v1 does not act on it — it is decoded so the shared recorder/replay decode
+    path stays total instead of aborting with :class:`DecodeError` on a normal
+    public-market frame. The docs spell the token array ``assets_ids`` (sic),
+    with ``clob_token_ids`` alongside; normalized here into ``asset_ids``
+    (exact wire form is M0-verifiable — PLAN §11).
+    """
+
+    condition_id: str
+    asset_ids: tuple[str, ...]
+    timestamp: int | None
+
+
 # --- User channel (WebSocket — no bucket/tx metadata) -----------------------
 class UserOrderUpdateType(Enum):
     PLACEMENT = "PLACEMENT"
@@ -268,6 +284,7 @@ ParsedRecordedEvent = (
     | TickSizeChange
     | BestBidAsk
     | MarketResolved
+    | NewMarket
     | UserOrderEvent
     | UserTradeWsEvent
     | RestTradeEvent
@@ -424,6 +441,15 @@ def _decode_market(event: RecordedEvent) -> ParsedRecordedEvent:
             # `condition_id`; fall back to `market` before the recorder envelope.
             condition_id=str(p.get("condition_id", p.get("market", event.condition_id))),
             winning_outcome=_parse_outcome(winner) if winner else None,
+            timestamp=opt_int(p.get("timestamp")),
+        )
+    if et == recorder.EVENT_NEW_MARKET:
+        # Docs spell the token array `assets_ids` (sic); `clob_token_ids` kept
+        # as the fallback key (exact wire form is M0-verifiable — PLAN §11).
+        raw_assets = p.get("assets_ids", p.get("clob_token_ids")) or []
+        return NewMarket(
+            condition_id=str(p.get("condition_id", p.get("market", event.condition_id))),
+            asset_ids=tuple(str(a) for a in raw_assets),
             timestamp=opt_int(p.get("timestamp")),
         )
     raise DecodeError(f"unknown market event_type: {event.event_type!r}")

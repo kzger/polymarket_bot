@@ -21,7 +21,8 @@ from typing import Any
 SCHEMA_VERSION = 1
 # Bump whenever decode_recorded_event's parsing changes (Contract #1 / #1b).
 # v2: RestTradeEvent gained `trader_side` (top-level taker-fill capture).
-PARSER_VERSION = 2
+# v3: market-channel `new_market` decoded as NewMarket (custom_feature_enabled).
+PARSER_VERSION = 3
 
 
 class SourceKind(Enum):
@@ -93,6 +94,7 @@ EVENT_LAST_TRADE = "last_trade_price"
 EVENT_TICK_SIZE_CHANGE = "tick_size_change"
 EVENT_BEST_BID_ASK = "best_bid_ask"
 EVENT_MARKET_RESOLVED = "market_resolved"
+EVENT_NEW_MARKET = "new_market"
 # User channel
 EVENT_ORDER = "order"
 EVENT_TRADE = "trade"

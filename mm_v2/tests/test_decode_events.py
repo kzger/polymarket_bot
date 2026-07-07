@@ -23,6 +23,7 @@ from mm_v2.feeds.events import (
     MarketLastTrade,
     MarketPriceChange,
     MarketResolved,
+    NewMarket,
     RestSnapshot,
     RestTradeEvent,
     SyntheticMarker,
@@ -480,6 +481,44 @@ def test_decode_rest_trade_accepts_prefixed_status() -> None:
 
     assert isinstance(parsed, RestTradeEvent)
     assert parsed.status is SettlementStatus.CONFIRMED
+
+
+def test_decode_new_market_frame_normalizes_documented_keys() -> None:
+    # Market channel with custom_feature_enabled also emits `new_market`. The
+    # docs spell the token array `assets_ids` (sic); the decoder must read the
+    # documented wire key and normalize into `asset_ids` — not abort the shared
+    # recorder/replay path with DecodeError.
+    rec = make_event(
+        SourceKind.MARKET_WS,
+        "new_market",
+        {
+            "market": CONDITION,
+            "assets_ids": ["yes-tok", "no-tok"],
+            "timestamp": "1700000000000",
+        },
+    )
+
+    parsed = decode_recorded_event(rec)
+
+    assert isinstance(parsed, NewMarket)
+    assert parsed.condition_id == CONDITION
+    assert parsed.asset_ids == ("yes-tok", "no-tok")
+    assert parsed.timestamp == 1700000000000
+
+
+def test_decode_new_market_falls_back_to_clob_token_ids() -> None:
+    # Docs also list `clob_token_ids` alongside `assets_ids`; accept it as the
+    # fallback key (exact wire form is M0-verifiable).
+    rec = make_event(
+        SourceKind.MARKET_WS,
+        "new_market",
+        {"market": CONDITION, "clob_token_ids": ["yes-tok", "no-tok"]},
+    )
+
+    parsed = decode_recorded_event(rec)
+
+    assert isinstance(parsed, NewMarket)
+    assert parsed.asset_ids == ("yes-tok", "no-tok")
 
 
 def test_decode_unknown_event_type_raises_decode_error() -> None:
